@@ -94,7 +94,7 @@ function create(opts = {}) {
   // ------------------------------------------------------------------ coins
   function newCoin(p, at) {
     return { m: p.m, sym: p.sym || '', name: p.name || '', t0: p.t0 || null, first: p.first || at, quote: p.quote || null, bc: p.bc || null, pool: p.pool || null,
-      words: G.words(p.name, p.sym), cross: null, stage: 'curve', stageAt: at, last: p.last || null, hi: p.hi || 0, hiAt: p.hiAt || null, chi: 0,
+      words: G.words(p.name, p.sym), cross: null, stage: p.stage || 'curve', stageAt: p.stageAt || at, last: p.last || null, hi: p.hi || 0, hiAt: p.hiAt || null, chi: 0,
       obs: p.obs || [], bars: p.bars || [], bar: p.bar || null, flow: p.flow || [], snaps: [], cs: {}, audit: null, auditLast: null, rc: null, rcLast: null, dec: 6,
       g0: null, gs: null, meme: null, sq: null, sqFails: 0, invalid: null, claims: null, used: 0 };
   }
@@ -265,7 +265,7 @@ function create(opts = {}) {
     const pos = { id: o.id, m: o.m, sym: k.sym, kind: A.kind, sigAt: o.sigAt, sigPx: o.sigPx, at: o.at, quoteReq: ev.req, quoteAt: at, fillAt: at + C.landS,
       stake: o.stake, qty, raw, dec: k.dec, px, mkt, cost: o.stake + fixed, rent: C.rentSol, impact: ev.impact, route: ev.labels, stage: k.stage,
       slip: o.sigPx ? px / o.sigPx - 1 : null, why: o.why, thesis: o.thesis || null, state: 'healthy', states: [], rules: {}, flags: [],
-      mark: null, mae: 0, mfe: 0, maeLo: 0, peakV: null, exitFails: 0, snap: o.snap || null };
+      mark: null, mae: null, mfe: null, maeLo: null, peakV: null, exitFails: 0, snap: o.snap || null };
     A.pos = pos; A.n.fills++; S.n.fills++;
     if (s && s.onFill) s.onFill(ctx, A, pos, at);
     log('fill', { id: o.id, a: A.id, side: 'buy', m: o.m, stake: o.stake, qty, px, mkt, impact: ev.impact, route: ev.labels, quoteReq: ev.req, quoteAt: at, slip: pos.slip, rules: pos.rules, flags: pos.flags });
@@ -311,15 +311,17 @@ function create(opts = {}) {
       v -= fixed;
     } else why = !k || !k.last ? 'no price' : k.invalid ? 'unreadable data' : `price ${Math.round(at - k.last.at)} s old`;
     if (pos.state === 'exit_unavailable') { src = v != null ? src : 'u'; why = why || 'no sell route'; }
-    const worst = Math.max(0, MODEL.worstOut(pos.qty, k && k.stage === 'curve' ? 'curve' : 'pool', at) * (1 - C.latency) - fixed);
+    // a lower bound: never above what selling now would return
+    const worst = Math.min(v != null ? Math.max(0, v) : Infinity, Math.max(0, MODEL.worstOut(pos.qty, k && k.stage === 'curve' ? 'curve' : 'pool', at) * (1 - C.latency) - fixed));
     const prev = pos.mark;
     pos.mark = { at, v: v != null ? Math.max(0, v) : null, src, why, worst, last: v != null ? Math.max(0, v) : prev ? prev.last : null, lastAt: v != null ? at : prev ? prev.lastAt : null };
-    if (v != null) {
+    if (v != null) {   // excursions from the first mark on (a trade that was never above water has a negative best)
       const r = v / pos.cost - 1;
-      pos.mae = Math.min(pos.mae, r); pos.mfe = Math.max(pos.mfe, r);
+      pos.mae = pos.mae == null ? r : Math.min(pos.mae, r); pos.mfe = pos.mfe == null ? r : Math.max(pos.mfe, r);
       pos.peakV = Math.max(pos.peakV || 0, v);
     }
-    pos.maeLo = Math.min(pos.maeLo, (v != null ? Math.min(v, Math.max(worst, 0)) : worst) / pos.cost - 1);
+    const lo = worst / pos.cost - 1;
+    pos.maeLo = pos.maeLo == null ? lo : Math.min(pos.maeLo, lo);
   }
   function equity(A) {
     const base = A.cash + A.rent;
@@ -439,7 +441,7 @@ function create(opts = {}) {
         if (k) { k.used = at; coinPx(k, ev.pairs, at); if (k.invalid) err(`field dexscreener ${k.sym}: ${k.invalid.why}`); break; }
         if (!coinPx(p, ev.pairs, at)) break;
         if (p.t0 && at - p.t0 > C.followS) { pre.delete(ev.m); break; }
-        if (p.quote === 'SOL' && p.bc && p.last.mc >= C.crossMc) { const k2 = promote(p, at, p.last.mc); coinPx(k2, ev.pairs, at); }
+        if (p.quote === 'SOL' && p.bc && p.last.mc >= C.crossMc) promote(p, at, p.last.mc);
         break;
       }
       case 'jup': {
@@ -452,7 +454,8 @@ function create(opts = {}) {
         if (ev.bad && ev.bad.some(b => /^audit/.test(b))) { k.invalid = { at, why: 'audit fields: ' + ev.bad.join(', '), src: 'jup' }; err(`field jupiter ${k.sym}: ${ev.bad.join(', ')}`); }
         else if (k.invalid && k.invalid.src === 'jup') k.invalid = null;
         if (!k.audit) { k.audit = a; log('audit', { m: k.m, src: 'jupiter', req: ev.req, at, audit: ev.audit, holders: ev.holders, bad: ev.bad }); }
-        k.auditLast = a;
+        // a later snapshot without audit data is missing data, not new risk: the last known audit stands
+        if (!a.missing || !k.auditLast || k.auditLast.missing) k.auditLast = a;
         k.snaps.push({ at, srcAt: ev.srcAt, usd: ev.usd, mc: ev.mc, liq: ev.liq, holders: ev.holders, org: ev.org, s5: ev.s5, s1h: ev.s1h });
         while (k.snaps.length && k.snaps[0].at < at - C.keepObsS) k.snaps.shift();
         if (ev.claims && (ev.claims.tw || ev.claims.web || ev.claims.tg)) k.jclaims = { at, tw: ev.claims.tw, web: ev.claims.web, tg: ev.claims.tg };

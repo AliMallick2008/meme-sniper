@@ -10,6 +10,7 @@
    - Fault isolation: any v11 error is caught and counted; after 50 in one run, v11 stops for that run and the legacy
      bots carry on. Paper only: quotes are prices for exact sizes; nothing is ever signed or sent. */
 const zlib = require('zlib');
+const fs = require('fs');
 const ENG = require('./engine.js');
 const PARSE = require('./parse.js');
 const ST = require('./strategies.js');
@@ -34,7 +35,10 @@ function create(o) {
       return undefined;
     }
   }
-  function ingest(ev) { ev.id = `${o.run}:${++seq}`; eng.ingest(ev); st.events++; }
+  // V11_TRACE=<file>: every event, in the order the engine got it (tests replay it through an independent reference)
+  const trace = process.env.V11_TRACE || null;
+  function ingest(ev) { ev.id = `${o.run}:${++seq}`; if (trace) fs.appendFileSync(trace, JSON.stringify(ev) + '\n'); eng.ingest(ev); st.events++; }
+  function tick(at) { if (trace) fs.appendFileSync(trace, JSON.stringify({ type: 'tick', at }) + '\n'); eng.tick(at); }
   /* every response the process gets: url, { status, json }, request and receipt times in ms */
   function observe(url, res, reqMs, atMs) {
     safe(() => {
@@ -46,7 +50,7 @@ function create(o) {
   // the run starts before anything else reaches the engine (the legacy bots' first calls come right after)
   safe(() => ingest({ type: 'run_start', at: nowS(), req: nowS(), run: o.run, sha: o.sha }));
   function start() { tickLoop(); quoteLoop(); snapLoop(); dexLoop(); }
-  async function tickLoop() { while (!stopped && !st.disabled) { safe(() => eng.tick(nowS())); safe(() => { for (const r of eng.drain()) addLine(r); }); await o.clock.sleep(1000); } }
+  async function tickLoop() { while (!stopped && !st.disabled) { safe(() => tick(nowS())); safe(() => { for (const r of eng.drain()) addLine(r); }); await o.clock.sleep(1000); } }
   async function quoteLoop() {
     while (!stopped && !st.disabled) {
       const r = safe(() => { const q = eng.requests(nowS())[0] || null; if (q) eng.sent(q.key, nowS()); return q; });
@@ -59,9 +63,9 @@ function create(o) {
     while (!stopped && !st.disabled) {
       const a = safe(() => eng.active(nowS())) || { hot: [], warm: [] };
       const ms = [...a.hot, ...a.warm].filter(PARSE.okAddr).slice(0, 100);
-      for (let i = 0; i < ms.length && !stopped; i += 50) {
+      for (let i = 0; i < ms.length && !stopped; i += 40) {
         st.snaps++;
-        try { await o.getJSON('jup', `${JUP}/tokens/v2/search?query=${ms.slice(i, i + 50).join(',')}`); } catch (e) { /* retried next round */ }
+        try { await o.getJSON('jup', `${JUP}/tokens/v2/search?query=${ms.slice(i, i + 40).join(',')}`); } catch (e) { /* retried next round */ }
       }
       await o.clock.sleep(ms.length ? 20000 : 5000);
     }
@@ -92,7 +96,7 @@ function create(o) {
       st.lastErr = 'event log upload: ' + String(e && e.message || e).slice(0, 80);
     } finally { flushing = false; }
   }
-  function stop() { stopped = true; safe(() => { eng.tick(nowS()); for (const r of eng.drain()) addLine(r); }); }
+  function stop() { stopped = true; safe(() => { tick(nowS()); for (const r of eng.drain()) addLine(r); }); }
   /* a fill since the last save: the server saves within seconds, like the legacy bots */
   function urgent() { const f = eng.state().n.fills; return f !== savedFills; }
   function save() { savedFills = eng.state().n.fills; return safe(() => VIEW.persist(eng)) || null; }

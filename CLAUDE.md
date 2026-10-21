@@ -29,6 +29,14 @@ server/                 the Meme Sniper server (Node 22, no dependencies)
   gitstore.js           state on the `data` branch, research on the `research` branch
   research.js           records every $7K crossing with its checks and final 1-minute candles
   sim.js                the same loop on a virtual clock against a mock market (tests)
+  v11/                  the audit's causal engine, beside the legacy bots (never touches them):
+    engine.js           events in arrival order -> eligibility, orders filled only by later quotes, marks, gaps, ledger
+    strategies.js       E0-* (legacy rules, causal timing), HOLD, A/B/C (v2), E2 + ablation variants (replays)
+    features.js risk.js model.js fees.js gates.js social.js   evidence families, sizing/risk plan, curve/pool math,
+                        versioned fees, legacy + strict gates, narrative evidence
+    parse.js            API responses -> timestamped events (schema checks)
+    runtime.js view.js  server side: response tap, own snapshot/price/quote calls, saves, page view, event log, trace
+    verify.js check.js replay.js reconcile.js   invariants, state check CLI, trace replay/ablations, legacy reconciliation
 dashboard/              the web page (one self-contained HTML file)
   page.html style.css engine.js meme.js ui.js sniper_ui.js research.json
   build.py              -> dashboard/dist/btc-paper-lab.html, dist/site/ (GitHub Pages), dist/btc-paper-lab-site.zip (Netlify)
@@ -53,6 +61,11 @@ the page's local mode and the server run identical code.
   of traded coins). Never hand-edit it while a run is going.
 - **Research:** branch `research`, gzipped JSON lines, one file per hour per run: every coin that crossed $7K, its
   point-in-time checks, and its final 1-minute candles from launch to 2 h after the crossing (+ SOL/USD per minute).
+- **v11:** runs in the same process (`main.js` taps every API response into it; its own Jupiter snapshot and quote calls
+  share the legacy lanes; Jupiter lane at 2.1 s = the 30/min keyless limit). State `v11.json` + a view in
+  `state.json > v11` (data branch); append-only event log on the research branch (`v11/events/...`); every event of a run
+  in the `v11-trace-<run id>` Actions artifact (30 days) for `node server/v11/replay.js`. 50 errors in a run stop v11 for
+  that run (legacy carries on); `V11=off` disables it.
 - **Page:** https://alimallick2008.github.io/meme-sniper/ (branch `gh-pages`, published by `dashboard.yml` on every
   push to `main` that touches the page or the engine). Server mode reads `state.json` from the GitHub API (60 calls/h
   per IP without login; the page uses about 40) and falls back to raw.githubusercontent.com. Live charts and prices come
@@ -73,21 +86,23 @@ Needs Node 22 and Python 3 with `playwright` and `pillow` (Chromium from Playwri
 python3 dashboard/build.py                          # build the page
 for f in dashboard/dist/_s*.js; do node --check $f; done
 node dashboard/tests/engine_unit.js                 # 22 engine unit tests (curve math, fills, rearm, memes)
-node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 engine tests (T01-T20)
-python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 21 min outage) vs the Python reference, research records vs market (~6 min)
+node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 tests T01-T20 + replay (29 tests)
+python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 22 min outage) vs the Python reference, research records vs market,
+                                                    # v11 invariants, E0 vs its independent Python reference (v11_e0_ref.py), exact trace replay (~12 min)
 python3 dashboard/tests/server_page_check.py        # page in server mode on that output: same bots, chart, replay, API budget, takeover (~3 min)
 python3 dashboard/tests/sniper_e2e_run.py           # page local mode, scripted 3.2 h market vs reference (~10 min)
 python3 dashboard/tests/sniper_e2e_more.py          # flaky APIs, reload, closed 37 min, two tabs
 python3 dashboard/tests/sniper_e2e_busy.py          # 150 crossings stress, GeckoTerminal budget
 ```
 
-Test outputs go to `dashboard/.out/`. Every result must say `ALL BOTS MATCH` / `SERVER PAGE OK`.
+Test outputs go to `dashboard/.out/`. Every result must say `ALL BOTS MATCH` / `V11 OK` / `ALL E0 MATCH` / `SERVER PAGE OK`.
 Deploy = push to `main`: the dashboard workflow publishes the page, and the running bot picks up server changes within 5 min.
 
 ## Current work
 
-Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in
-`docs/PROGRESS.md`. Resume from PROGRESS.md.
+The Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in `docs/PROGRESS.md`,
+evidence in `docs/v11-report.md`. Resume from PROGRESS.md. Rules for v11 accounts are locked like the legacy ones:
+`E0_LOCKED` / `V2_LOCKED` in `server/v11/strategies.js`; a change is a new account id with its own start.
 
 ## Status (Oct 21 2026, 4:45 AM ET)
 

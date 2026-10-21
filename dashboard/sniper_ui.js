@@ -124,7 +124,7 @@ const SNIPER_UI = (() => {
     if (SRV.srv && s.srv.t < SRV.srv.t) return;   // never step back to an older copy (the CDN can lag the API)
     const j = s.J; j.tc = {};
     useJ(j);
-    SRV.srv = s.srv; SRV.at = Date.now(); SRV.via = via;
+    SRV.srv = s.srv; SRV.at = Date.now(); SRV.via = via; SRV.v11 = s.v11 || null;
     const last = J.ev.length ? J.ev[J.ev.length - 1][0] : 0;
     if (!quiet && SRV.lastEvT) for (const e of J.ev) if (e[0] > SRV.lastEvT && e[1] && /^(buy|win|loss)$/.test(e[2])) toast(BOT(e[1]), e[2], BOT(e[1]).name, String(e[3]).replace(/^[^:]*:\s*/, ''), e[4]);
     SRV.lastEvT = Math.max(SRV.lastEvT, last);
@@ -426,6 +426,7 @@ const SNIPER_UI = (() => {
       </div>
       <div class="panel"><div class="ph"><div><h2>Strategy lab</h2><p>Your rules and six versions of them run side by side on the same coins, each with its own 10 paper SOL, so you can see which one actually makes money. Tap a bot to follow it on the chart.</p></div></div>
         <div class="tablewrap" id="snLab"></div><div class="sn-eq" id="snEq"></div><p class="note" id="snLabNote"></p></div>
+      <div class="panel" id="snV11"></div>
       <div class="panel"><div class="ph"><div><h2>Watchlist</h2><p id="snWatchSub">Coins that passed every check, and how far each is from its buy zone.</p></div></div><div id="snWatch"></div></div>
       <div class="panel"><div class="ph"><div><h2>Trades</h2><p>Tap a coin to see its chart with the buy and the sell, or replay the trade.</p></div></div><div class="tablewrap" id="snTrades"></div></div>
       <div class="two">
@@ -453,7 +454,7 @@ const SNIPER_UI = (() => {
     const prevM = M.view.m;
     if (!M.view.pinned && !M.view.replay) M.view.m = focusOf(M.view.bot);
     if (M.view.m && M.view.m !== prevM && !M.cs.get(M.view.m) && J.coins[M.view.m]) want(M.view.m, 1);
-    renderHero(); renderBots(); renderHead(); renderDoing(); renderChecks(); renderMemes(); renderLab(); renderWatch(); renderTrades(); renderScan(); renderFeed(); renderRules(); renderReplayBar();
+    renderHero(); renderBots(); renderHead(); renderDoing(); renderChecks(); renderMemes(); renderLab(); renderV11(); renderWatch(); renderTrades(); renderScan(); renderFeed(); renderRules(); renderReplayBar();
     $('snFollow').hidden = !M.view.pinned;
     if (M.view.mode === 'dex') {
       $('snChart').hidden = true; $('snDex').hidden = false; $('snChartEmpty').hidden = true;
@@ -613,6 +614,59 @@ const SNIPER_UI = (() => {
       <td class="n x">${sPct(a.avgW)}</td><td class="n x">${sPct(a.avgL)}</td><td class="n x">${sPct(a.worst)}</td><td class="x">${esc(st[1])}${a.mk ? ` <span class="${cls(a.mk.net)}">${sPct(a.mk.ret)}</span>` : ''}</td></tr>`).join('')}</tbody></table>`;
     const tot = sum(rows.map(r => r.a.n));
     $('snLabNote').textContent = (tot < 30 ? `Only ${tot} trade${tot === 1 ? '' : 's'} so far across all bots. A few lucky or unlucky trades decide these numbers; wait for dozens of trades per bot before reading much into them.` : `Balances include open positions at their sell-now value. Every bot started with ${START_SOL} SOL ${mode === 'server' ? 'on the server' : 'here'} on ${fDT(J.start)} ET.`) + (mode === 'server' && prevRun ? ' ' + prevRun : '');
+  }
+  // ---------------------------------------------------------------- v11 (audit fixes): the causal engine running beside the bots above
+  const V11_SRC = { q: 'sell quote', c: 'quote-calibrated model', m: 'model at a fresh price', u: 'UNPRICEABLE' };
+  const V11_STATE = { healthy: ['in', 'thesis holds'], watching: ['wait', 'watching a weak sign'], broken: ['bad', 'thesis broken'], exit_pending: ['wait', 'selling'], exit_unavailable: ['bad', 'cannot sell'] };
+  function spark(rows) {
+    if (!rows || rows.length < 2) return '';
+    const xs = rows.map(r => r[0]), ys = rows.map(r => r[1]), lo = Math.min(...ys, ...rows.map(r => r[2])), hi = Math.max(...ys);
+    const x0 = xs[0], dx = (xs[xs.length - 1] - x0) || 1, dy = (hi - lo) || 1e-9, P = (x, y) => `${((x - x0) / dx * 118 + 1).toFixed(1)},${(23 - (y - lo) / dy * 22).toFixed(1)}`;
+    return `<svg class="v11-spark" viewBox="0 0 120 24" aria-hidden="true"><polyline points="${rows.map(r => P(r[0], r[2])).join(' ')}" class="lo"/><polyline points="${rows.map(r => P(r[0], r[1])).join(' ')}"/></svg>`;
+  }
+  function renderV11() {
+    const el = $('snV11'); if (!el) return;
+    const ok = t => isFinite(t) && t > 0, ts = t => ok(t) ? fTS(t) : '–', dt = t => ok(t) ? fDT(t) : '–', tm = t => ok(t) ? fT(t) : '–';
+    const V = mode === 'server' ? SRV.v11 : null;
+    const head = st => `<div class="ph"><div><h2>v11: honest timing <span class="pill ${st ? st[0] : 'off'}">${esc(st ? st[1] : 'server only')}</span></h2>
+      <p>The audit’s fixes, running on the server beside the bots above (which are unchanged). Every decision uses only what had arrived by then: a watch starts when the last check came in, a buy is a live price, and the fill is the next Jupiter quote after the decision, with fees, price impact, a 0.5% latency allowance and network costs. Nothing is booked for time the server was off.</p></div></div>`;
+    if (!V || !V.accts) { el.innerHTML = head(null) + '<div class="empty">v11 runs on the bot server only. Its accounts show up here once the server reports them.</div>'; return; }
+    const st = V.status || {}, inc = st.state !== 'forward';
+    const s = solNow(), legacy = id => { const b = BOTS.find(x => 'E0-' + x.id === id); return b ? acct(b) : null; };
+    const rows = V.accts.map(A => {
+      const pnl = A.eq - START_SOL, lg = legacy(A.id), p = A.pos;
+      const now = p ? `holding <button class="sn-link" data-coin="${esc(p.m)}">${esc(p.sym || short(p.m))}</button> <span class="pill ${(V11_STATE[p.state] || ['off'])[0]}">${esc((V11_STATE[p.state] || [0, p.state])[1])}</span>`
+        : A.watching ? `watching ${A.watching}${A.scan && A.scan.rows && A.scan.rows[0] && !A.scan.rows[0][2] ? ` <span class="note">(best: ${esc(A.scan.rows[0][1])}, ${esc(A.scan.rows[0][3])})</span>` : ''}` : A.kind === 'HOLD' ? 'holds SOL' : 'no setup yet';
+      return `<tr><td><b>${esc(A.label)}</b><div class="note">${A.kind === 'E0' ? 'legacy rules, causal timing' : A.kind === 'V2' ? 'new strategy' : A.kind === 'HOLD' ? 'baseline' : ''}${A.start ? ' · since ' + esc(dt(A.start)) : ''}</div></td>
+        <td class="n"><b>${A.eq.toFixed(3)}</b>${A.src === 'u' ? `<div class="note">worst ${A.lo.toFixed(3)}</div>` : ''}</td><td class="n ${cls(pnl)}">${sSol(pnl)}</td>
+        <td class="n">${A.trades}</td><td class="n">${A.trades ? Math.round(A.wins / A.trades * 100) + '%' : '–'}</td><td class="n x">${(A.mdd * 100).toFixed(1)}%</td>
+        <td class="n x">${lg ? `${lg.bal.toFixed(3)} <span class="note">(${lg.n})</span>` : ''}</td><td class="x">${spark(A.eqs)}</td><td>${now}</td></tr>`;
+    }).join('');
+    const pos = V.accts.filter(A => A.pos).map(A => {
+      const p = A.pos, mk = p.mark || {}, th = p.thesis || {}, k = (V.coins || {})[p.m] || {};
+      const val = mk.v != null ? `${sol(mk.v, 4)} <span class="${cls(mk.v - p.cost)}">${sPct(mk.v / p.cost - 1)}</span>` : `<b class="down">unpriceable</b>${mk.last != null ? ` (last ${sol(mk.last, 4)}, ${age((V.t || 0) - (mk.lastAt || 0))} old)` : ''}`;
+      const fam = (p.fam || A.fam || []).map(f => `<span class="chip ${f[1] === 'bad' ? 'off' : f[1] === 'ok' ? 'on' : ''}" title="${esc(f[2] || '')}">${esc(f[0])}: ${esc(f[1])}</span>`).join('');
+      return `<div class="v11-pos"><div><b>${esc(A.label)}</b> · <button class="sn-link" data-coin="${esc(p.m)}">${esc(p.sym || short(p.m))}</button> <span class="note">${esc(k.stage || p.stage || '')}</span></div>
+        <div class="note">${esc(p.why || '')}${th.horizonS ? ` · horizon ${Math.round(th.horizonS / 60)} min` : ''}${th.stopPx ? ' · protective level set' : ''}${th.social ? ` · social evidence: ${esc(th.social)}` : ''}</div>
+        <div>Now: ${val} · <span class="note">from ${esc(V11_SRC[mk.src] || mk.src || '–')}${mk.why ? ' (' + esc(mk.why) + ')' : ''}, worst case ${sol(mk.worst, 4)}</span></div>
+        <div class="note">Bought ${esc(ts(p.quoteAt))} ET for ${sol(p.cost, 4)}: signal ${esc(ts(p.sigAt))}, decision ${esc(ts(p.at))}, quote asked ${esc(ts(p.quoteReq))}; ${p.slip != null ? sPct(p.slip) + ' over the signal price (fees, impact, latency, move)' : ''}. ${p.mae != null ? `Worst so far ${sPct(p.mae)}, best ${sPct(p.mfe)}.` : ''}</div>
+        ${fam ? `<div class="sn-chips">${fam}</div>` : ''}${(p.flags || []).map(f => `<div class="note warn">${esc(f)}</div>`).join('')}</div>`;
+    }).join('');
+    const trades = V.accts.flatMap(A => (A.recent || []).map(t => Object.assign({ a: A.label }, t))).sort((x, y) => y.exitQuoteAt - x.exitQuoteAt).slice(0, 12);
+    const tt = trades.length ? `<table class="v11-trades"><thead><tr><th>Account</th><th>Coin</th><th class="n">Signal → filled (ET)</th><th class="n x">Over signal</th><th>Exit</th><th class="n">Net</th><th class="n x">Worst / best</th></tr></thead><tbody>${trades.map(t => `
+      <tr><td>${esc(t.a)}</td><td><button class="sn-link" data-coin="${esc(t.m)}">${esc(t.sym || short(t.m))}</button></td><td class="n">${esc(ts(t.sigAt))} → ${esc(ts(t.quoteAt))}</td><td class="n x">${sPct(t.slip)}</td>
+      <td>${esc(t.exitReason || '')}<div class="note">${esc(t.exitWhy || '')} · ${esc(ts(t.exitQuoteAt))}</div></td><td class="n ${cls(t.net)}"><b>${sSol(t.net, 4)}</b><div class="note">${sPct(t.ret)}</div></td><td class="n x">${t.mae != null ? `${sPct(t.mae)} / ${sPct(t.mfe)}` : '–'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No closed v11 trades yet.</div>';
+    const gaps = (V.gaps || []).slice(-5).reverse().map(g => `<li>${esc(dt(g.from))} to ${esc(tm(g.to))} ET (${esc(g.why)}): nothing booked; ${g.cancelled} order${g.cancelled === 1 ? '' : 's'} cancelled${g.hypo && g.hypo.length ? '; hypothetical inside it: ' + g.hypo.map(h => `${esc(h.a)} ${h.rule === 'none' ? 'no exit' : h.rule === 'unknown' ? 'unknown' : esc(h.rule) + ' at ' + esc(tm(h.at))}`).join(', ') : ''}</li>`).join('');
+    const dec = (V.dec || []).slice(-14).reverse().map(d => `<div class="sn-ev ${esc(d.k)}"><span class="mono">${esc(ts(d.at))}</span><span>${d.m ? `<button class="sn-link" data-coin="${esc(d.m)}">${esc(d.t)}</button>` : esc(d.t)}</span></div>`).join('');
+    const nTr = sum(V.accts.map(A => A.trades));
+    el.innerHTML = head(inc ? ['wait', 'Incomplete data'] : ['in', 'Forward paper']) +
+      (inc ? `<p class="note warn">Entries paused: ${esc((st.why || []).join('; '))}. Held positions keep being managed.</p>` : '') +
+      `<div class="tablewrap"><table class="sn-lab v11-acc"><thead><tr><th>Account</th><th class="n">Balance</th><th class="n">P&amp;L</th><th class="n">Trades</th><th class="n">Wins</th><th class="n x">Max drop</th><th class="n x">Legacy twin</th><th class="x">Marked equity</th><th>Now</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="note">${nTr < 30 ? `Only ${nTr} closed v11 trade${nTr === 1 ? '' : 's'} so far: far too few to rank anything. ` : ''}Balances are marked from sell quotes or the curve model at a fresh price, never from an old price; “worst” is what selling would return if every other holder sold first. “Legacy twin” is the matching bot above, which keeps the old timing. Each E0 account runs a legacy bot’s exact rules with honest timing, so the gap between the two is how much of the old result came from timing.${s ? ` SOL ${fmtUsd(s)}.` : ''}</p>
+      ${pos ? `<h3>Open positions</h3>${pos}` : ''}
+      <h3>Recent trades</h3><div class="tablewrap">${tt}</div>
+      ${gaps ? `<h3>Server gaps</h3><ul class="note v11-gaps">${gaps}</ul>` : ''}
+      <h3>Decisions</h3><div class="sn-feed v11-feed">${dec || '<div class="empty">Nothing yet.</div>'}</div>`;
   }
   function renderWatch() {
     const el = $('snWatch'); if (!el) return;

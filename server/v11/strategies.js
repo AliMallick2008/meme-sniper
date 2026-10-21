@@ -9,7 +9,7 @@
 const LEGACY = require('../sniper.js');
 const R = LEGACY.RULES;
 
-const E0_LOCKED = Date.UTC(2026, 9, 21, 11, 0, 0) / 1000;   // Wed Oct 21 2026, 7:00 AM ET
+const E0_LOCKED = Date.UTC(2026, 9, 21, 10, 45, 0) / 1000;   // RULES LOCKED Wed Oct 21 2026, 6:45 AM ET (before the first v11 start)
 const E0_SLIP = 0.10;   // a buy fills only if the quote is at most 10% over the observed signal price (fees and impact included)
 
 function E0(bot) {
@@ -116,7 +116,7 @@ function e0All() { return R.BOTS.map(E0); }
    All thresholds are first guesses to be tested, not tuned values. */
 const FEAT = require('./features.js');
 const RISK = require('./risk.js');
-const V2_LOCKED = Date.UTC(2026, 9, 21, 11, 0, 0) / 1000;   // set again at deploy if anything below changes
+const V2_LOCKED = Date.UTC(2026, 9, 21, 10, 45, 0) / 1000;   // RULES LOCKED Wed Oct 21 2026, 6:45 AM ET; any change below = new ids, new start
 const BASE = { stake: 1, everyS: 10, slip: 0.08, maxImpactQuote: 0.08, persistS: 20, coolLossS: 1800, coolWinS: 600, coolFailS: 60,
   risk: { maxImpact: 0.06, riskBudget: 0.3, maxBreakEven: 0.12, minStake: 0.1, stopGap: 0.15 } };
 const no = why => ({ ok: false, why });
@@ -170,9 +170,13 @@ const SPECS = {
     } },
 };
 
-function V2(key) {
+/* opts (ablations, audit D2): noDemand (the setup ignores buy/sell evidence and exits ignore the demand family),
+   noThesis (exits only by emergency, protective level, risk budget, trailing guard and horizon), noTrail. */
+function V2(key, opts = {}) {
   const spec = SPECS[key], P = Object.assign({}, BASE, spec.P, { risk: Object.assign({}, BASE.risk, spec.P.maxImpact ? { maxImpact: spec.P.maxImpact } : {}) });
-  const id = key, label = spec.label;
+  const tag = Object.keys(opts).filter(k => opts[k]).map(k => k.replace(/^no/, '-').toLowerCase()).join('');
+  const id = key + tag, label = spec.label + (tag ? ` (${tag.slice(1).replace(/-/g, ', no ')})`.replace('(', '(no ') : '');
+  const demandFree = F => opts.noDemand ? Object.assign({}, F, { buyShare: 0.75, netPct: 0.01, dShare: 0, dTraders: 0, traders: Math.max(F.traders || 0, 60) }) : F;
   return {
     id, kind: 'V2', gate: 'strict', label, locked: V2_LOCKED, rules: P,
     onEligible(ctx, A, k, eligibleAt) {
@@ -197,7 +201,7 @@ function V2(key) {
         const b = ctx.blocked(k, at);
         if (b) { rows.push({ w, sym: k.sym, ok: false, why: b }); continue; }
         const F = FEAT.features(k, at, ctx);
-        const s = spec.setup(F, k, w, ctx, P);
+        const s = spec.setup(demandFree(F), k, w, ctx, P);
         if (!s.ok) { rows.push({ w, sym: k.sym, ok: false, why: s.why }); continue; }
         const plan = RISK.plan(Object.assign({ pSol: k.last.sol, stage: k.stage, liq: ctx.liqOf(k), at, stake: Math.min(P.stake, cash), stopFrac: s.stopFrac,
           costs: { prioSol: C.prioSol, netFeeSol: C.netFeeSol, latency: C.latency } }, P.risk));
@@ -232,7 +236,7 @@ function V2(key) {
       if (em) return { exit: true, reason: 'emergency', why: em };
       if (r.stopPx && k.last && !ctx.blocked(k, at) && k.last.sol <= r.stopPx) return { exit: true, reason: 'stop', why: 'protective level hit' };
       if (pos.mark && pos.mark.v != null && pos.cost - pos.mark.v > r.riskBudget * 1.25) return { exit: true, reason: 'risk', why: `loss ${(pos.cost - pos.mark.v).toFixed(3)} SOL is past the risk budget` };
-      const fam = FEAT.families(F, k, pos), bad = fam.filter(f => f.v === 'bad');
+      const fam = FEAT.families(F, k, pos).filter(f => !(opts.noDemand && f.f === 'demand')), bad = opts.noThesis ? [] : fam.filter(f => f.v === 'bad');
       pos.fam = fam.map(f => [f.f, f.v, f.why]);
       if (bad.length >= 2) {
         if (!pos.badSince) pos.badSince = at;
@@ -242,7 +246,7 @@ function V2(key) {
         pos.badSince = null;
         if (pos.state !== 'exit_pending') ctx.setState(A, pos, bad.length ? 'watching' : 'healthy', bad.length ? bad[0].f + ': ' + bad[0].why : 'evidence still supports it', at);
       }
-      if (pos.mfe >= r.trailFrom && pos.mark && pos.mark.v != null && pos.peakV && pos.mark.v <= pos.peakV * (1 - r.trail))
+      if (!opts.noTrail && pos.mfe >= r.trailFrom && pos.mark && pos.mark.v != null && pos.peakV && pos.mark.v <= pos.peakV * (1 - r.trail))
         return { exit: true, reason: 'trail', why: `gave back ${(r.trail * 100).toFixed(0)}% from its best mark after ${pct(pos.mfe)}` };
       if (at - pos.fillAt >= r.horizonS) return { exit: true, reason: 'time', why: `${Math.round(r.horizonS / 60)} min horizon` };
       return null;
@@ -251,5 +255,20 @@ function V2(key) {
     interest() { return []; },
   };
 }
-function v2All() { return ['A', 'B', 'C'].map(V2); }
-module.exports = { E0, HOLD, e0All, E0_LOCKED, E0_SLIP, V2, v2All, V2_LOCKED, SPECS, BASE };
+function v2All() { return ['A', 'B', 'C'].map(k => V2(k)); }
+
+/* E2 (audit experiment E2: does explicit downside invalidation help?): a legacy bot's entries exactly as E0, with the v2
+   exits instead of its target / stop / time limit: thesis checks, emergencies, the risk budget, a trailing guard and a
+   finite horizon (2 h). Replay-only for now. */
+function E2(bot) {
+  const e0 = E0(bot), v = V2('B');
+  return Object.assign({}, e0, { id: 'E2-' + bot.id, kind: 'E2', label: `E2 ${bot.name} entries, v2 exits`,
+    onFill(ctx, A, pos, at) { e0.onFill(ctx, A, pos, at); pos.rules = { stopPx: null, horizonS: 7200, trailFrom: 0.25, trail: 0.15, riskBudget: 0.6 }; },
+    review: v.review });
+}
+/* Strategy sets for replays: the live set, and each ablation next to what it removes. */
+function ablations() {
+  return [...v2All(), V2('A', { noDemand: true }), V2('B', { noDemand: true }), V2('C', { noDemand: true }), V2('A', { noThesis: true }), V2('B', { noThesis: true }),
+    V2('A', { noTrail: true }), ...e0All(), ...R.BOTS.filter(b => ['U', 'U2', 'GRN'].includes(b.id)).map(E2), HOLD];
+}
+module.exports = { E0, E2, HOLD, e0All, E0_LOCKED, E0_SLIP, V2, v2All, V2_LOCKED, SPECS, BASE, ablations };

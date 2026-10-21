@@ -15,6 +15,8 @@ const RUN = process.env.GITHUB_RUN_ID || 'local';
 const DIR = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'sniper-data');
 const BRANCH = process.env.DATA_BRANCH || 'data';
 const UA = `meme-sniper-paper-bot/1.0 (+https://github.com/${REPO})`;
+// v11 records every event it ingests; the workflow keeps the file as a 30-day artifact for replays and ablations
+if (!process.env.V11_TRACE && process.env.RUNNER_TEMP) process.env.V11_TRACE = path.join(process.env.RUNNER_TEMP, 'v11-trace.jsonl');
 const log = s => console.log(`${new Date().toISOString()} ${s}`);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let stopAsked = false;

@@ -306,3 +306,15 @@ footer { color: var(--muted); font-size: 12.5px; padding-block: 26px 40px; }
 .chart-ctl { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .sel { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .sel select { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; max-width: 60vw; }
+
+/* v11 panel */
+#snV11 h3 { margin: 16px 0 8px; font-size: 15px; }
+.v11-spark { width: 120px; height: 24px; display: block; }
+.v11-spark polyline { fill: none; stroke: var(--c-snipe); stroke-width: 1.5; }
+.v11-spark polyline.lo { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 2 2; }
+.v11-pos { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-bottom: 8px; display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.v11-pos .sn-chips { margin-top: 2px; }
+.note.warn { color: var(--warn); }
+.pill.bad { background: var(--loss-bg, var(--panel-2)); color: var(--loss); border-color: transparent; }
+.v11-gaps { margin: 0; padding-left: 18px; }
+.v11-feed { max-height: 260px; }

@@ -26,3 +26,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SECONDS: '20700'
+      # every event the v11 engine ingested in this run, for exact replays and ablations (server/v11/replay.js)
+      - name: Keep the v11 event trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v11-trace-${{ github.run_id }}
+          path: ${{ runner.temp }}/v11-trace.jsonl
+          retention-days: 30
+          if-no-files-found: ignore
+          compression-level: 9

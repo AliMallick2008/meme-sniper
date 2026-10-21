@@ -75,6 +75,7 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     shutil.rmtree(DIR, ignore_errors=True); os.makedirs(DIR)
+    os.environ["V11_TRACE"] = f"{DIR}/v11_trace.jsonl"   # every event v11 ingests, for the independent E0 reference
     # run 3 goes on 2 h 10 min past the last launch, so every crossed coin's research record comes due
     L = int(HOURS * 3600)
     end = T0 + L + 7800
@@ -141,14 +142,30 @@ def check_v11(mk, J, o):
         ltxt = f" | legacy {len(leg['trades'])} trades, {10 + sum(t['net'] for t in leg['trades']):.3f} SOL realized" if leg else ""
         print(f"   {A['id']:<7} trades {A['trades']:>3} wins {A['wins']:>3} realized {10 + A['realized']:7.3f} SOL  open {(A['open'] or {}).get('sym', '-'):<8} signals {A['n']['signals']:>3} orders {A['n']['orders']:>3} fails {A['n']['fails']:>3} mdd {A['mdd'] * 100:6.2f}%{ltxt}")
         for t in A["list"][:6]:
-            print(f"      {sym.get(t['m'], '?'):<8} signal {t['sigAt'] - T0:+8.1f}  quote {t['quoteAt'] - T0:+8.1f}  exit {t['exitQuoteAt'] - T0:+8.1f} {t['reason']:<5} net {t['net']:+.4f}  slip {t['slip'] * 100:5.1f}%  mae {t['mae'] * 100:6.1f}%")
+            print(f"      {sym.get(t['m'], '?'):<8} signal {t['sigAt'] - T0:+8.1f}  quote {t['quoteAt'] - T0:+8.1f}  exit {t['exitQuoteAt'] - T0:+8.1f} {t['reason']:<5} net {t['net']:+.4f}  slip {(t['slip'] or 0) * 100:5.1f}%  mae {(t['mae'] or 0) * 100:6.1f}%")
     if r["violations"]:
         print("   VIOLATIONS:"); [print("     ", v) for v in r["violations"][:20]]
     if r["errors"]:
         print("   last errors:", [e[1][:90] for e in r["errors"]])
     sizes = o.get("sizes", {})
     print(f"   v11.json max {sizes.get('v11', 0)} bytes, page view max {sizes.get('v11view', 0)} bytes")
-    return not r["violations"] and r["n"]["cross"] > 0
+    # independent Python replay of the E0 accounts from the same events
+    import v11_e0_ref
+    bots = json.loads(subprocess.check_output(["node", "-e", "console.log(JSON.stringify(require(process.argv[1]).RULES.BOTS.map(b => ({ id: b.id, P: b.P, C: b.C }))))", os.path.join(REPO, "server", "sniper.js")]))
+    ref_ok, rows, n = v11_e0_ref.compare(f"{DIR}/v11_trace.jsonl", f, bots)
+    for aid, nr, ne, rc, ec, same, rt, et in rows:
+        print(f"   reference {aid:<7} trades {nr:>3} vs engine {ne:>3}  cash {rc:.9f} vs {ec:.9f}  -> {'MATCH' if same else 'DIFF'}")
+        if not same:
+            for x, y in list(zip(rt, et))[:8]:
+                print(f"      ref {sym.get(x['m'], '?'):<8} {x['at'] - T0:+9.1f} {x['quoteAt'] - T0:+9.1f} {x['exitAt'] - T0:+9.1f} {x['reason']:<4} {x['net']:+.6f} | eng {sym.get(y['m'], '?'):<8} {y['at'] - T0:+9.1f} {y['quoteAt'] - T0:+9.1f} {y['exitAt'] - T0:+9.1f} {y['exitReason']:<4} {y['net']:+.6f}")
+    print(f"   E0 reference over {n} events: {'ALL E0 MATCH' if ref_ok else 'E0 DIFFERS'}")
+    # the trace replayed through a fresh engine (with the same save/load at each restart) gives the same books
+    rp = json.loads(subprocess.check_output(["node", os.path.join(REPO, "server", "v11", "replay.js"), f"{DIR}/v11_trace.jsonl"]))
+    saved = json.load(open(f))["accts"]
+    rp_ok = all(abs(a["realized"] - sum(t["net"] for t in saved[a["id"]]["trades"])) < 1e-5 and a["trades"] == len(saved[a["id"]]["trades"]) for a in rp["accounts"])
+    print(f"   exact replay of the trace: {'SAME BOOKS' if rp_ok else 'DIFFERENT BOOKS'} ({', '.join(a['id'] + ' ' + str(a['trades']) for a in rp['accounts'])})")
+    ref_ok = ref_ok and rp_ok
+    return not r["violations"] and r["n"]["cross"] > 0 and ref_ok
 
 
 if __name__ == "__main__":

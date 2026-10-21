@@ -63,6 +63,16 @@ def main():
     hero = R.pg.inner_text("#snHero")
     print("mode", mode, "| bots identical to the server:", ok, "| hero:", hero.split("\n")[-1][:150] if "Running" not in hero else [l for l in hero.split("\n") if "Running" in l][0][:150])
     ok = ok and mode == "server" and "Running 24/7" in hero
+    # the v11 panel shows the server's v11 accounts, with the same balances
+    v11 = st.get("v11")
+    if v11:
+        got = R.pg.evaluate("() => [...document.querySelectorAll('#snV11 .v11-acc tbody tr')].map(r => r.cells[1].innerText.split('\\n')[0].trim())")
+        exp = [f"{A['eq']:.3f}" for A in v11["accts"]]
+        print("v11 panel:", len(got), "accounts, balances as saved:", got == exp, "| status:", v11["status"]["state"], "| open positions:", sum(1 for A in v11["accts"] if A["pos"]), "| trades:", sum(A["trades"] for A in v11["accts"]))
+        ok = ok and got == exp
+        R.shot(paths.out("server_v11.png"), full=False, sel="#snV11")
+    else:
+        print("v11 panel: no v11 in state.json"); ok = False
     R.advance(300, step=5)
     shown = R.pg.evaluate("() => ({ m: SNIPER_UI._M.view.m, cs: (SNIPER_UI._M.cs.get(SNIPER_UI._M.view.m) || { cs: [] }).cs.length, empty: !document.getElementById('snChartEmpty').hidden })")
     print("chart:", shown)

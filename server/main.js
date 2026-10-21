@@ -36,9 +36,10 @@ async function runServer(o) {
   } else log('no saved journal: fresh start with 10 paper SOL per bot');
   if (V11 && !o.noV11) {
     try {
+      const from = st && st.v11 ? 'saved state from ' + new Date(st.v11.lastAt * 1000).toISOString() : 'fresh start';
       v11 = V11.create({ clock, log, getJSON: core.getJSON, put: store.putResearch, run: o.info.run, sha: o.info.sha, state: st && st.v11 });
       core.LANES.jup.gap = Math.max(core.LANES.jup.gap, 2100);   // Jupiter keyless: 30 calls a minute for tokens + quotes together
-      log(`v11 loaded: ${st && st.v11 ? 'saved state from ' + new Date(st.v11.lastAt * 1000).toISOString() : 'fresh start'}`);
+      log(`v11 loaded: ${from}`);
     } catch (e) { log('v11 failed to start: ' + (e && e.stack || e)); v11 = null; }
   }
   core.resume();

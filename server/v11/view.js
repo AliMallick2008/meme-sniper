@@ -19,10 +19,11 @@ function persist(eng) {
     const c = Object.assign({}, k, { obs: [], flow: [], snaps: [], bars: [], bar: null, cs: {}, socialObs: (k.socialObs || []).slice(-60) });
     if (k.auditLast === k.audit) delete c.auditLast;
     if (k.rcLast === k.rc) delete c.rcLast;
-    if (act.has(m)) {
-      c.obs = every(k.obs, at - 960, 10); c.flow = every(k.flow, at - 420, 10); c.snaps = every(k.snaps, at - 420, 15, x => x.at).map(x => Object.assign({}, x, { s1h: undefined }));
+    if (act.has(m)) {   // held coins at full detail; watched ones coarser (features recover within minutes after a restart)
+      const h = held.has(m);
+      c.obs = every(k.obs, at - 960, h ? 10 : 30); c.flow = every(k.flow, at - 420, h ? 10 : 60); c.snaps = every(k.snaps, at - 420, h ? 15 : 60, x => x.at).map(x => Object.assign({}, x, { s1h: undefined }));
       c.bars = k.bars.slice(-6); c.bar = k.bar;
-      if (held.has(m)) for (const t of Object.keys(k.cs).map(Number).sort((a, b) => a - b).slice(-90)) c.cs[t] = k.cs[t];
+      if (h) for (const t of Object.keys(k.cs).map(Number).sort((a, b) => a - b).slice(-90)) c.cs[t] = k.cs[t];
     }
     coins[m] = c;
   }
@@ -33,7 +34,7 @@ function compactPos(p) {
     mkt: r6(p.mkt), cost: r6(p.cost), impact: r6(p.impact), slip: r6(p.slip), route: p.route, stage: p.stage, why: p.why, state: p.state, states: (p.states || []).slice(-6),
     rules: p.rules, flags: p.flags, thesis: p.thesis || null, exitFails: p.exitFails || 0,
     mark: p.mark ? { at: p.mark.at, v: r6(p.mark.v), src: p.mark.src, why: p.mark.why, worst: r6(p.mark.worst), last: r6(p.mark.last), lastAt: p.mark.lastAt } : null,
-    mae: r6(p.mae), mfe: r6(p.mfe), maeLo: r6(p.maeLo) };
+    mae: r6(p.mae), mfe: r6(p.mfe), maeLo: r6(p.maeLo), fam: p.fam || null };
 }
 function compactTrade(t) {
   return { id: t.id, m: t.m, sym: t.sym, sigAt: t.sigAt, at: t.at, quoteReq: t.quoteReq, quoteAt: t.quoteAt, fillAt: t.fillAt, stake: t.stake, px: r6(t.px), mkt: r6(t.mkt),
@@ -54,11 +55,12 @@ function page(eng, rt) {
   const accts = Object.values(S.accts).map(A => {
     const e = eng.equity(A), realized = A.trades.reduce((s, t) => s + t.net, 0);
     if (A.pos) refs.add(A.pos.m);
-    for (const t of A.trades.slice(-8)) refs.add(t.m);
-    const watch = A.watch.filter(w => !w.done).map(w => { refs.add(w.m); return { m: w.m, sym: w.sym, from: w.from, to: w.to, trig: r6(w.trig), H: r6(w.H), ready: w.ready, armed: !!w.armed, lag: w.lag, block: w.lastBlock || null }; });
+    for (const t of A.trades.slice(-6)) refs.add(t.m);
+    const live = A.watch.filter(w => !w.done);
+    const watch = live.slice(-8).map(w => ({ m: w.m, sym: w.sym, from: w.from, to: w.to, trig: r6(w.trig), H: r6(w.H), ready: w.ready, armed: !!w.armed, lag: w.lag }));
     return { id: A.id, kind: A.kind, label: A.label, locked: A.locked, start: A.start, cash: r6(A.cash), rent: r6(A.rent), eq: r6(e.eq), lo: r6(e.lo), src: e.src, age: e.age,
       realized: r6(realized), n: A.n, trades: A.trades.length, wins: A.trades.filter(t => t.net > 0).length, mdd: r6(A.mdd), mddLo: r6(A.mddLo),
-      pos: A.pos ? compactPos(A.pos) : null, watch, recent: A.trades.slice(-8).map(compactTrade), eqs: thin(A.eq, 100), scan: A.scan || null };
+      pos: A.pos ? compactPos(A.pos) : null, watching: live.length, watch, recent: A.trades.slice(-6).map(compactTrade), eqs: thin(A.eq, 72), scan: A.scan ? { at: A.scan.at, rows: A.scan.rows.slice(0, 5) } : null };
   });
   const coins = {};
   for (const m of refs) {
@@ -72,7 +74,7 @@ function page(eng, rt) {
   }
   return { v: 1, exp: S.exp, version: S.version, t: S.lastAt, created: S.created, status: S.status, runs: S.runs.slice(-5),
     gaps: S.gaps.slice(-10).map(g => ({ id: g.id, from: g.from, to: g.to, why: g.why, cancelled: g.cancelled.length, open: g.open.length, hypo: g.hypo })),
-    accts, coins, dec: S.dec.slice(-60), hypo: S.hypo.slice(-30), errors: S.errors.slice(-10), n: S.n,
+    accts, coins, dec: S.dec.slice(-40), hypo: S.hypo.slice(-30), errors: S.errors.slice(-10), n: S.n,
     rt: rt ? { events: rt.events, errors: rt.errors, quotes: rt.quotes, snaps: rt.snaps, dex: rt.dex, files: rt.files, lastErr: rt.lastErr, disabled: rt.disabled } : null,
     cfg: { latency: C.latency, prioSol: C.prioSol, netFeeSol: C.netFeeSol, rentSol: C.rentSol, orderTtlS: C.orderTtlS, pxFreshS: C.pxFreshS, gapS: C.gapS } };
 }
