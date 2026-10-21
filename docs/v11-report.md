@@ -30,7 +30,7 @@ Nothing here shows that any strategy makes money. The point is that results can 
 
 ## Tests (Section F)
 
-All in `node --test server/tests/*.test.js` (29 tests, all passing). Where the audit asks for it, a test also runs the
+All in `node --test server/tests/*.test.js` (27 tests including the Phase 0 guards and the replay tests, all passing). Where the audit asks for it, a test also runs the
 legacy engine on the same synthetic market and shows it doing what the fix forbids.
 
 | ID | Scenario | v11 result | Legacy on the same market |
@@ -60,28 +60,41 @@ legacy engine on the same synthetic market and shows it doing what the fix forbi
 
 Simulator (`dashboard/tests/server_sim_test.py 2.5 3`): the busy synthetic market (150 coins over $7K and 300 duds in
 2.5 h), run by the real server code in three runs with a 50 s handover and a 22 min outage.
-- Legacy bots: SIM_LEGACY
+- Legacy bots: all 7 match the independent Python replay of the locked rules (`ALL BOTS MATCH`): v11 changes nothing for them.
 - v11 invariants (every trade justified by data received before its decision, nothing booked inside the outage, the
-  books add up): SIM_V11
-- Independent Python reference of the 7 E0 accounts, replaying the same event trace: SIM_REF
-- Exact replay of the trace through a fresh engine (with the same save/load at each restart): SIM_REPLAY
-- Sizes: SIM_SIZES
+  books add up): no violations over 63 orders and 60 fills; the outage is recorded as a gap (8 open positions, nothing booked inside it, its hypothetical exits listed); 0 runtime errors, 0 duplicate events.
+- Independent Python reference of the 7 E0 accounts, replaying the same event trace: `ALL E0 MATCH` over 159,203 events: same trades, same times, same cash to 1e-9 SOL for all 7 accounts, across the handover and the outage.
+- Exact replay of the trace through a fresh engine (with the same save/load at each restart): `SAME BOOKS` for all 11 accounts.
+- Sizes: `v11.json` at most 696 KB, the page view inside `state.json` at most 93 KB; the page in server mode shows the v11 panel with the saved balances, no page errors, 390 px phone width, 38 GitHub API calls an hour (`SERVER PAGE OK`). Page local mode unchanged (`ALL BOTS MATCH`).
 
 A/B/C are covered by deterministic unit tests and the invariants, not by an independent re-implementation; their
 simulator trades use made-up buy/sell stats derived from the synthetic price path, so their simulated P&L means nothing.
 
-## Legacy vs causal reconciliation (live journal, Oct 21 2026 10:14 UTC)
+## Legacy vs causal reconciliation (live journal, Oct 21 2026 10:40 UTC)
 
 From `node server/v11/reconcile.js state.json --md` on the live `data` branch. The E0 twins are not running yet, so that
 column fills in once v11 is live.
 
-RECON_TABLE
+| Bot | Coin | Entry candle (UTC) | Booked | Checks in | Entry MC | Exit | Net SOL | Flags | E0 twin |
+|---|---|---|---|---|---|---|---|---|---|
+| U | ok | 08:28 | 08:30:55 | 08:25:59 | $4.4K | open | open | stop-unreachable: stop at $443 under the curve floor $3.0K | not running yet |
+| U2 | ok | 08:28 | 08:30:55 | 08:25:59 | $4.4K | time 10:27 | -0.3812 | booked-late: sell booked 244 s after its candle closed; stop-unreachable: stop at $443 under the curve floor $3.0K | not running yet |
+| U30 | ok | 08:28 | 08:30:55 | 08:25:59 | $4.4K | time 08:57 | -0.3839 | booked-late: sell booked 5644 s after its candle closed; stop-unreachable: stop at $443 under the curve floor $3.0K | not running yet |
+| U30 | DAWKOIN | 09:03 | 10:33:39 | 09:02:32 | $16.0K | time 09:32 | -0.7979 | booked-late: buy booked 5379 s after its candle closed; booked-late: sell booked 3640 s after its candle closed; stop-unreachable: stop at $1.6K under the curve floor $3.0K | not running yet |
+| U30 | TILLY | 09:49 | 10:35:36 | 09:48:07 | $5.5K | tp 10:09 | +0.0100 | booked-late: buy booked 2736 s after its candle closed; booked-late: sell booked 1540 s after its candle closed; stop-unreachable: stop at $553 under the curve floor $3.0K | not running yet |
+| T25 | ok | 08:28 | 08:30:55 | 08:25:59 | $4.4K | time 10:27 | -0.3812 | booked-late: sell booked 244 s after its candle closed; stop-unreachable: stop at $443 under the curve floor $3.0K | not running yet |
+| D55 | ok | 08:28 | 08:30:55 | 08:25:59 | $3.3K | time 10:27 | -0.1838 | booked-late: sell booked 244 s after its candle closed; stop-unreachable: stop at $333 under the curve floor $3.0K | not running yet |
+| GRN | TILLY | 08:31 | 08:35:11 | 08:29:29 | $7.7K | tp 08:32 | +0.0100 | booked-late: buy booked 191 s after its candle closed; booked-late: sell booked 134 s after its candle closed; same-candle: filled at the close of its own signal candle; stop-unreachable: stop at $773 under the curve floor $3.0K | not running yet |
+| GRN | NICE | 08:44 | 08:50:01 | 08:39:46 | $3.0K | open | open | booked-late: buy booked 301 s after its candle closed; same-candle: filled at the close of its own signal candle; stop-unreachable: stop at $298 under the curve floor $3.0K | not running yet |
 
-What it shows so far: every legacy position has a stop the market cannot reach; both GRN trades were booked 3 to 5
-minutes after their candles and filled at the close of their own signal candle; five bots have held the coin "ok" since
-08:28 UTC, after it died at the curve floor at 08:31. U30 is far past its 30-minute limit because the legacy time limit
-only fires on a new candle, and a dead coin has none (Findings 03, 11, 15 observed live). The legacy bots stay as they
-are (locked rules); E0 enforces time limits by the clock.
+What it shows so far: every legacy trade has a stop the market cannot reach. Both GRN trades were booked 2 to 5 minutes
+after their candles and filled at the close of their own signal candle. The coin "ok" died at the curve floor at 08:31 UTC,
+three minutes after five bots bought it. The legacy time limits only fire on a new candle, and a dead coin has none, so
+U30 sat 90 minutes past its 30-minute limit (Findings 03, 11, 15 observed live). When "ok" finally printed a candle at
+10:27, U30 booked its 08:57 time exit 94 minutes late and then, within two minutes, two more trades from the past:
+DAWKOIN bought at a 09:03 candle (booked 10:33, 90 minutes later) and TILLY bought at a 09:49 candle (booked 10:35).
+Those are replays with hindsight recorded as forward paper trades (Findings 01, 19). The legacy bots stay as they are
+(locked rules); E0 enforces time limits by the clock and never books the past.
 
 ## Execution costs (model, 1 SOL on the bonding curve, SOL $106.90)
 

@@ -86,7 +86,7 @@ Needs Node 22 and Python 3 with `playwright` and `pillow` (Chromium from Playwri
 python3 dashboard/build.py                          # build the page
 for f in dashboard/dist/_s*.js; do node --check $f; done
 node dashboard/tests/engine_unit.js                 # 22 engine unit tests (curve math, fills, rearm, memes)
-node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 tests T01-T20 + replay (29 tests)
+node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 tests T01-T20 + replay (27 tests)
 python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 22 min outage) vs the Python reference, research records vs market,
                                                     # v11 invariants, E0 vs its independent Python reference (v11_e0_ref.py), exact trace replay (~12 min)
 python3 dashboard/tests/server_page_check.py        # page in server mode on that output: same bots, chart, replay, API budget, takeover (~3 min)

@@ -2,6 +2,34 @@
 
 Starts Fri Oct 16, 2026, 8:00 PM ET (2026-10-17 00:00 UTC). $8,000 paper money per bot. Rules locked before the start; any change = new version with a new start time. History: v2 limit-first orders for Trend Swing; v3 added Half-Size, Leveraged, Multi-Speed; v4 added 10 strategy-lab bots; v5 added the 1h/15m Trader (own start 11 PM ET); v6 added the Futures Breakout (own start Sat 3:00 AM ET); v7 added the Combo 50/50 (own start Sat 8:00 PM ET, delivered Mon Oct 19 5:05 PM ET); v8 adds the Meme Coin Trader (own start Mon Oct 19 8:00 PM ET). Earlier bots verified identical, trade for trade, across v4 to v7.
 
+## Meme Sniper v11 (the Oct 21 audit, Section E). RULES LOCKED Wed Oct 21, 2026, 6:45 AM ET (10:45 UTC)
+Requested Oct 21 4:56 AM ET: implement Section E phases 0-5 in order with tests T01-T20; continued in Claude Code
+(branch `claude/v11-audit`, AliMallick2008/meme-sniper#1). Evidence: `docs/v11-report.md`. Legacy v10 bots unchanged.
+- Engine `server/v11/`: event-driven, only acts on what had arrived. Watch starts when the last check arrived (not the
+  crossing); signals are live observations; fills only from a Jupiter quote requested after the decision (0.5% latency
+  allowance, 0.0002 SOL priority + 0.000005 network fee per swap, 0.00203928 SOL token-account rent locked while
+  holding); marks from a sell quote, the quote-calibrated model or the model at a fresh price, else UNPRICEABLE with the
+  last value and a worst case; SOL/USD backwards only; gaps over 90 s book nothing (orders cancelled, watches re-armed,
+  would-be exits recorded as hypothetical); graduation pauses fills; stale or broken data halts entries.
+- Accounts (10 paper SOL each, start = first server run after the lock): E0-U, E0-U2, E0-U30, E0-T25, E0-D55, E0-GRN,
+  E0-STR (legacy rules exactly, honest timing; a buy fills only within 10% of the signal price), HOLD, and the new
+  A (launch momentum), B (confirmed pullback), C (after graduation): strict four-valued gates, size from depth, risk
+  budget 0.3 SOL, break-even under 12%, reachable protective level, ranked at a common decision time, thesis exits on two
+  independent evidence families (structure, buy/sell flow, liquidity, holders) for 20 s or one verified emergency,
+  trailing guard, horizons 20 min / 45 min / 2 h. Thresholds are first guesses, not tuned.
+- Social: no approved X/Telegram source, so status `unavailable`; claims shown unverified; the old meme check is a name
+  cluster (context only).
+- Verified: 27 node tests (T01-T20, replay, Phase 0 guards); simulator (3 runs, 50 s handover, 22 min outage): legacy bots still match
+  their reference exactly, v11 invariants hold, the 7 E0 accounts match an independent Python reference exactly over
+  159,203 events, and an exact replay of the trace reproduces every account's books; page in server mode OK.
+- Live observation before v11 (reconcile.js on the live journal, 10:14 UTC): every legacy position has a stop under the
+  curve floor; both GRN trades were booked 3-5 min after their candles at their own signal candle's close; U, U2, U30,
+  T25 and D55 have held "ok" since 08:28 UTC, after it died at the floor at 08:31; U30 is past its 30-min limit because
+  legacy time limits need a new candle and a dead coin has none. At 10:27 "ok" printed a candle: U30 booked its 08:57
+  exit 94 min late, then within 2 min two past trades (DAWKOIN at a 09:03 candle booked 10:33, TILLY at 09:49 booked 10:35).
+- Not verifiable from the Claude Code session (network policy blocks the market APIs): live field shapes (taken from
+  the earlier probes), pump.fun fee tiers above 9,820 SOL.
+
 ## Live check, Wed Oct 21, 3:16 AM ET (4 d 7 h in; BTC $82,689 vs $81,500 at the start)
 Replayed the delivered v10 page on a fresh Coinbase capture through the browser pane (BTC 5m/1h/1d, 22 meme coins daily, SOL + 11 Solana memes hourly; sha256 f922b5a4...). Balances if closed now:
 Meme Coin Trader $8,528.59 (+$528.59, holding PEPE since Mon 8 PM) | Solana Meme Trader 10.533 SOL (+0.533, holding PENGU since Mon 6 PM; ~$1,117 at SOL $106.07) | Leveraged $8,114.61 | Trend Swing $8,034.39 (first trade still open) | Multi-Speed $8,027.79 | Half-Size $8,017.20 | Buy & Hold $8,000.78 | Futures Breakout $7,651.58 (-$348.42: 3 longs, all stopped: Sun, Mon, Tue) | Combo $7,849.02 (same 3 futures stops; swing half +$23.23) | Old Bot $6,633.57 (34 trades, $1,215.61 fees) | 1h/15m and Day Trader no trades. Meme Sniper runs in the user's browser: not visible from here.
