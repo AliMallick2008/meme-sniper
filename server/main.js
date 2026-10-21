@@ -42,6 +42,13 @@ async function runServer(o) {
   L(core.solTicker, 30000, 'sol');
   L(async () => { core.schedule(); core.stepAll(); }, 4000, 'schedule');
   core.checkLoop(); core.rcLoop(); core.gtLoop();
+  // one GeckoTerminal call a minute in, so its health shows on the page before any coin passes the checks
+  clock.sleep(60000).then(async () => {
+    const c = [...core.M.young.values()].find(x => core.okAddr(x.bc));
+    if (!c) return;
+    try { const a = await core.ohlcv(c.bc); log(`GeckoTerminal check: ${a ? a.length + ' candles' : 'no data'} for ${c.sym}`); }
+    catch (e) { log('GeckoTerminal check failed: ' + (e.message || e)); }
+  });
 
   let why = 'time';
   for (;;) {
