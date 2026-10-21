@@ -1,28 +1,37 @@
-# Meme Sniper (paper trading)
+# BTC Paper Lab + Meme Sniper (paper trading)
 
-Seven paper-trading bots for brand-new pump.fun meme coins, running 24/7 on GitHub Actions so no computer has to stay on.
-**Paper money only:** no wallet, no private keys, no real orders. Every number is simulated from public market data.
+A paper-trading lab: BTC bots, meme coin bots, and seven Meme Sniper bots for brand-new pump.fun coins. The Meme Sniper
+bots run 24/7 on GitHub Actions, so no computer has to stay on. **Paper money only:** no wallet, no private keys, no
+real orders. Every number is simulated from public market data.
 
-The dashboard (BTC Paper Lab, Meme Sniper tab) reads the bots' state from this repo and draws the live chart of each coin.
+**Dashboard:** https://alimallick2008.github.io/meme-sniper/
 
-## What runs
+## What's here
 
-- `.github/workflows/sniper.yml`: the bots. One run lasts about 5 h 45 min, saves the state every couple of minutes,
-  then starts the next run, which picks up where it left off.
-- `.github/workflows/watchdog.yml`: three times an hour, starts the bots if no run is going (for example after a GitHub hiccup).
-- `server/`: the code. `sniper.js` (bonding-curve math and the locked rules) and `sniper_core.js` (the bots) are the same files
-  the dashboard uses; `main.js` is the server loop, `run.js` the GitHub entry point, `research.js` the data recorder,
-  `sim.js` a simulator used for tests.
+- `server/`: the Meme Sniper server. `sniper.js` (bonding-curve math and the locked rules) and `sniper_core.js` (the
+  bots) are shared with the dashboard; `main.js` is the server loop, `run.js` the GitHub entry point, `research.js`
+  the data recorder, `sim.js` a simulator used by the tests.
+- `dashboard/`: the web page, its build script and its tests.
+- `research/`: research protocols, written before looking at results.
+- `docs/PROJECT_NOTES.md`: the full history, every bot's rules and results.
+- `CLAUDE.md`: how everything fits together, for Claude Code.
+
+## Workflows
+
+- **sniper**: the bots. One run lasts about 5 h 45 min, saves the state every couple of minutes, then starts the next
+  run, which picks up where it left off.
+- **watchdog**: three times an hour, starts the bots if no run is going.
+- **dashboard**: builds the page and publishes it to GitHub Pages when it changes.
 
 ## Branches
 
 - `main`: the code.
-- `data`: the bots' latest state (`state.json`, read by the dashboard), the coins being followed, and chart candles for traded coins.
-  Rewritten as a single commit on every save, so it never grows.
-- `research`: every coin that crossed $7K, with its rug checks at that moment and its 1-minute candles from launch to 2 h after
-  the crossing, used to test rule changes on coins the rules never saw.
+- `data`: the bots' latest state (`state.json`, read by the dashboard). Rewritten as one commit on every save, so it never grows.
+- `research`: every coin that crossed $7K, with its rug checks at that moment and its 1-minute candles from launch to
+  2 h after the crossing.
+- `gh-pages`: the published dashboard.
 
-## The rules (locked Oct 20 2026, 8:25 AM Toronto)
+## The Meme Sniper rules (locked Oct 20 2026, 8:25 AM Toronto)
 
 Scan new pump.fun coins; when one crosses $7K market cap, check it once (mint and freeze authority revoked, dev wallet at
 most 10%, top holders at most 30%, no RugCheck danger flag, on a current meme). Watch coins that pass for 2 hours and buy
@@ -32,5 +41,5 @@ Each bot started with 10 paper SOL.
 
 ## Stop or pause
 
-Actions tab, pick **sniper** and **watchdog**, then **Disable workflow** on both. Enable them again to resume; the bots
+Actions tab: pick **sniper** and **watchdog**, then **Disable workflow** on both. Enable them again to resume; the bots
 continue from the saved state.

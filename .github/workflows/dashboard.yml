@@ -1,0 +1,48 @@
+name: dashboard
+# Builds the page (dashboard/build.py), checks it, and publishes it to the gh-pages branch, which GitHub Pages serves at
+# https://alimallick2008.github.io/meme-sniper/. Runs when the page or the shared Meme Sniper engine changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/**'
+      - 'server/sniper.js'
+      - 'server/sniper_core.js'
+      - '.github/workflows/dashboard.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: dashboard
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and check
+        run: |
+          pip install --quiet pillow
+          python dashboard/build.py
+          for f in dashboard/dist/_s*.js; do node --check "$f"; done
+          node dashboard/tests/engine_unit.js
+      - name: Publish to gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dashboard/dist/site
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Dashboard from ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages

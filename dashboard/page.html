@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>BTC Paper Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<header class="strip">
+  <div class="wrap">
+    <div class="brand"><h1>BTC Paper Lab</h1><span class="ver">forward test v10.1</span></div>
+    <div class="tick"><span class="label">BTC-USD</span><span class="px" id="px">…</span><span class="chg" id="chg"></span></div>
+    <div class="feed"><span class="dot" id="dot"></span><span id="feed">Connecting to Coinbase…</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="clock" aria-live="polite">
+    <span class="big" id="clockBig">Loading…</span>
+    <span class="sub" id="clockSub"></span>
+    <span class="lock"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>Rules locked before the start. Every trade below happens on candles that did not exist yet.</span>
+  </section>
+  <div id="errBox"></div>
+
+  <div class="bar">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="t-sniper" aria-selected="true" data-tab="sniper"><span class="long">Meme </span>Sniper</button>
+      <button role="tab" id="t-live" aria-selected="false" data-tab="live">Live</button>
+      <button role="tab" id="t-trades" aria-selected="false" data-tab="trades">Trades</button>
+      <button role="tab" id="t-research" aria-selected="false" data-tab="research">Research</button>
+      <button role="tab" id="t-rules" aria-selected="false" data-tab="rules">Rules</button>
+    </div>
+    <div class="seg"><span>Fees</span>
+      <div class="opts" id="feeOpts">
+        <button id="fee-kraken" data-fee="kraken" aria-pressed="true">Kraken Pro tiers</button>
+        <button id="fee-f20" data-fee="f20" aria-pressed="false">0.20% flat</button>
+        <button id="fee-f10" data-fee="f10" aria-pressed="false">0.10% flat</button>
+      </div>
+      <span class="whatif" id="whatif" hidden>What-if view. The official record uses Kraken Pro tiers.</span>
+    </div>
+  </div>
+
+  <!-- ===================== MEME SNIPER ===================== -->
+  <section id="p-sniper" role="tabpanel">
+    <div id="sniper"></div>
+  </section>
+
+  <!-- ===================== LIVE ===================== -->
+  <section id="p-live" role="tabpanel" hidden>
+    <div class="panel solb-panel" style="margin-bottom:14px">
+      <div class="ph"><div><h2>Solana Meme Trader <span class="pill" id="solbPill">Loading</span></h2><p id="solbSub">Loading Solana meme coin prices from Coinbase…</p></div></div>
+      <div id="solbBody"></div>
+    </div>
+    <div class="bays" id="bays"></div>
+    <div class="stack">
+      <div class="panel">
+        <div class="ph"><div><h2>What each bot is doing</h2><p>The numbers each rule is looking at right now.</p></div></div>
+        <div class="now" id="nowList"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><div><h2>Meme coin leaderboard</h2><p id="memeSub">Loading meme coin prices from Coinbase…</p></div></div>
+        <div class="tablewrap" id="memeTable"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><div><h2>Strategy lab: 10 more bots</h2><p>Textbook ideas, $8,000 each, same fees and orders. With this many bots, some will look great for weeks by luck alone, so judge them over months against Buy &amp; Hold.</p></div></div>
+        <div class="tablewrap" id="labTable"></div>
+      </div>
+      <div class="panel">
+        <div class="ph">
+          <div><h2>BTC price and trades</h2><p>5-minute candles from Coinbase. Hover or tap a marker to see which bots traded. Pick one bot to see its trades joined up.</p></div>
+          <div class="chart-ctl"><label class="sel" for="botSel">Show trades for <select id="botSel"></select></label>
+          <div class="mini-btns" id="winBtns">
+            <button data-win="12h" aria-pressed="true">12h</button>
+            <button data-win="2d" aria-pressed="false">2 days</button>
+            <button data-win="7d" aria-pressed="false">7 days</button>
+            <button data-win="all" aria-pressed="false">Since start</button>
+          </div></div>
+        </div>
+        <div class="chart" id="pxChart"></div>
+        <div class="legend" id="pxLegend" style="margin-top:8px"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><div><h2>Balance since the start</h2><p>Each bot started with $8,000. Marked to the latest price.</p></div>
+          <div class="mini-btns" id="eqBtns"><button data-eq="core" aria-pressed="true">Main 11 bots</button><button data-eq="lab" aria-pressed="false">Lab 10 bots</button></div></div>
+        <div class="chart" id="eqChart"></div>
+        <div class="legend" id="eqLegend" style="margin-top:8px"></div>
+      </div>
+      <div class="two">
+        <div class="panel">
+          <div class="ph"><div><h2>Profit and loss by day</h2><p>Toronto days. Today is still running.</p></div></div>
+          <div class="tablewrap" id="dailyTable"></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div><h2>Scorecard</h2><p>Closed trades only, plus the open position's live value.</p></div></div>
+          <div class="tablewrap" id="scoreTable"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TRADES ===================== -->
+  <section id="p-trades" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="ph">
+        <div><h2>Every entry and exit</h2><p>Times are Toronto time. A fill marked "within candle" happened somewhere inside that 5-minute candle.</p></div>
+        <div class="filters" id="tradeFilters"></div>
+      </div>
+      <div class="tablewrap" id="tradeTable"></div>
+    </div>
+  </section>
+
+  <!-- ===================== RESEARCH ===================== -->
+  <section id="p-research" role="tabpanel" hidden>
+    <div id="research"></div>
+  </section>
+
+  <!-- ===================== RULES ===================== -->
+  <section id="p-rules" role="tabpanel" hidden>
+    <div id="rules"></div>
+  </section>
+
+  <footer>Paper trading with simulated money. Prices are real (Coinbase, DexScreener, GeckoTerminal, Jupiter, RugCheck public data). Nothing here is a recommendation to buy or sell. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a> Lightweight Charts.</footer>
+</main>
+<script>/*__LWC__*/</script>
+<script>/*__ENGINE__*/</script>
+<script>const RESEARCH = /*__RESEARCH__*/;</script>
+<script>/*__UI__*/</script>
+<script>/*__SNIPER__*/</script>
+</body>
+</html>
