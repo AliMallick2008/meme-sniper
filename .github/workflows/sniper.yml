@@ -1,0 +1,8 @@
+name: sniper
+on:
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "placeholder, the bot is added next"
