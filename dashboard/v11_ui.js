@@ -32,7 +32,7 @@ const V11_UI = (() => {
     const stale = S.halted || feedAge > 120 || !(saveAge < 600);
     const why = S.halted ? S.halted.why : feedAge > 120 ? `no fresh market data for ${age(feedAge)}` : !(saveAge < 600) ? `the server's last save is ${age(saveAge)} old` : '';
     return { pill: stale ? 'Incomplete data' : 'Forward paper', kind: stale ? 'wait' : 'in', why,
-      line: `Running since ${fDT(S.startedAt)} ET · server run ${esc(S.run || '–')} · saved ${age(saveAge)} ago · newest market data ${age(feedAge)} old · ${S.gaps.length} coverage gap${S.gaps.length === 1 ? '' : 's'}` };
+      line: `Engine ${esc(S.v)}${S.upgradedAt ? ` · accounts since ${fDT(S.upgradedAt)} ET` : ` · running since ${fDT(S.startedAt)} ET`} · server run ${esc(S.run || '–')} · saved ${age(saveAge)} ago · newest market data ${age(feedAge)} old · ${S.gaps.length} coverage gap${S.gaps.length === 1 ? '' : 's'}` };
   }
 
   // ------------------------------------------------------------------ render
@@ -81,7 +81,15 @@ const V11_UI = (() => {
         <td class="n">${v != null ? sol(v) : '<span class="down">unknown</span>'} <span class="${cls(ret)}">${sPct(ret)}</span><div class="faint">(${sol(A.lo)})</div></td>
         <td class="n ${cls(A.realized)}">${sSol(A.realized)}</td><td class="n">${A.nTrades}${A.nTrades ? ` <span class="faint">${A.wins}W</span>` : ''}</td><td>${open}</td>
         <td class="n">${sPct(A.mdd)}</td><td class="n">${A.n && A.n.orders ? `${A.n.fails}/${A.n.orders}` : '–'}</td><td class="n">${lg == null ? '–' : `<span class="${cls(lg)}">${sSol(lg)}</span>`}</td></tr>`;
-    }).join('')}</tbody></table><p class="faint v11-foot">"Legacy bot" is the same rule set as the original bot, scored the old way (candles, checks backdated, fills inside the minute). The gap between it and its E0 row is what honest timing changes.</p>`;
+    }).join('')}</tbody></table><p class="faint v11-foot">"Legacy bot" is the same rule set as the original bot, scored the old way (candles, checks backdated, fills inside the minute). The gap between it and its E0 row is what honest timing changes.</p>${archive()}`;
+  }
+  // results under an older engine, kept apart (11.0 read a lagging DexScreener price as current)
+  function archive() {
+    const a = S.archive || []; if (!a.length) return '';
+    const by = {}; for (const x of a) (by[x.engine + '|' + x.to] = by[x.engine + '|' + x.to] || []).push(x);
+    return Object.values(by).map(rows => `<details class="v11-archive"><summary>Engine ${esc(rows[0].engine)} results, ${fDT(rows[0].from)} to ${fDT(rows[0].to)} ET (archived: that engine read DexScreener's lagging price as current)</summary>
+      <table><thead><tr><th>Account</th><th class="n">Value at the end</th><th class="n">Closed P&amp;L</th><th class="n">Trades</th><th>Open then</th></tr></thead><tbody>${rows.map(x =>
+        `<tr><td>${esc(x.name || x.acct)}</td><td class="n">${x.value != null ? sol(x.value) : 'unknown'}</td><td class="n ${cls(x.net)}">${sSol(x.net)}</td><td class="n">${x.trades}${x.trades ? ` <span class="faint">${x.wins || 0}W</span>` : ''}</td><td>${x.open ? esc(x.open.sym) : '–'}</td></tr>`).join('')}</tbody></table></details>`).join('');
   }
   function renderEquity() {
     const el = $('v11Eq'); if (!el || typeof LightweightCharts === 'undefined') return;

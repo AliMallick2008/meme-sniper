@@ -37,12 +37,15 @@ function fromJup(x, at, solUsd) {
   if (!(pu > 0)) return { m: x.id, at, src: 'jup', valid: false, reason: 'Jupiter: usdPrice missing (schema change?)' };
   const s5 = x.stats5m || {}, s1 = x.stats1h || {};
   // Jupiter leaves a field out rather than sending 0 (Oct 21 2026 probe), so a missing count stays unknown (NaN).
-  // holderChange, liquidityChange and priceChange are percent changes over the window.
+  // holderChange is a percent change over the window. Only fields the engine or the research use are kept (11.1): the
+  // snapshots are recorded every 12 s for up to a few hundred coins, and the dropped ones (numOrganicBuyers, never sent;
+  // liquidity and price change, derivable) were half of the recording.
   const st = o => ({ bv: r7(num(o.buyVolume)), sv: r7(num(o.sellVolume)), nb: num(o.numBuys), ns: num(o.numSells), tr: num(o.numTraders), nnb: num(o.numNetBuyers),
-    nob: num(o.numOrganicBuyers), bov: r7(num(o.buyOrganicVolume)), sov: r7(num(o.sellOrganicVolume)), hc: r7(num(o.holderChange)), lc: r7(num(o.liquidityChange)), pc: r7(num(o.priceChange)) });
+    bov: r7(num(o.buyOrganicVolume)), sov: r7(num(o.sellOrganicVolume)), hc: r7(num(o.holderChange)) });
+  const st1 = o => ({ bv: r7(num(o.buyVolume)), sv: r7(num(o.sellVolume)), tr: num(o.numTraders), nnb: num(o.numNetBuyers) });
   return { m: x.id, at, src: 'jup', valid: true, p: pu, ps: solUsd ? r7(pu / solUsd) : null, mc: r7(num(x.mcap)) || null, liqUsd: r7(num(x.liquidity)) || null,
-    holders: num(x.holderCount) || null, org: r7(num(x.organicScore)), asOf: x.updatedAt ? Date.parse(x.updatedAt) || null : null, dev: typeof x.dev === 'string' ? x.dev : null,
-    st: st(s5), st1h: st(s1), audit: x.audit && typeof x.audit === 'object' ? x.audit : null };
+    holders: num(x.holderCount) || null, asOf: x.updatedAt ? Date.parse(x.updatedAt) || null : null, dev: typeof x.dev === 'string' ? x.dev : null,
+    st: st(s5), st1h: st1(s1), audit: x.audit && typeof x.audit === 'object' ? x.audit : null };
 }
 /* RugCheck full report (/v1/tokens/{mint}/report, probed Oct 21 2026): creator + creatorBalance (raw units),
    token.supply (raw), topHolders[] (owner, pct), knownAccounts (type AMM for the curve and pools, CREATOR), risks.
@@ -128,15 +131,17 @@ function createRuntime({ core, clock, log, store, run, sha }) {
       for (const m of batch) { const s = fromDex(j, m, at); if (s) { s.id = `d:${m}:${at}`; s.type = 'snapshot'; if (!s.valid) stats.invalid++; ingest(s); stats.dex++; } }
     }
   }
-  // order flow (Jupiter 5-minute and 1-hour windows) for the fast list, one call every 20 s
+  // prices (engine 11.1: Jupiter first) and order flow for the whole fast list, held coins first, 100 per call, every 12 s
   async function pollJup() {
-    const list = eng.pollPlan(now()).fast.filter(core.okAddr).slice(0, 100);
-    if (!list.length) return;
-    let j; try { j = await core.getJSON('jup', `${JUP}/tokens/v2/search?query=${list.join(',')}`); } catch (e) { return; }
-    const at = now();
-    if (!Array.isArray(j)) { for (const m of list) ingest({ id: `j:${m}:${at}`, type: 'snapshot', m, at, src: 'jup', valid: false, reason: 'Jupiter: response is not a list' }); stats.invalid++; return; }
-    const sol = solUsd(at);
-    for (const x of j) { const s = fromJup(x, at, sol); if (s) { s.id = `j:${s.m}:${at}`; s.type = 'snapshot'; if (!s.valid) stats.invalid++; ingest(s); stats.jup++; } }
+    const all = eng.pollPlan(now()).fast.filter(core.okAddr).slice(0, 200);   // at most 2 calls: the lane is shared with the legacy bots
+    for (let i = 0; i < all.length; i += 100) {
+      const list = all.slice(i, i + 100);
+      let j; try { j = await core.getJSON('jup', `${JUP}/tokens/v2/search?query=${list.join(',')}`); } catch (e) { return; }
+      const at = now();
+      if (!Array.isArray(j)) { for (const m of list) ingest({ id: `j:${m}:${at}`, type: 'snapshot', m, at, src: 'jup', valid: false, reason: 'Jupiter: response is not a list' }); stats.invalid++; return; }
+      const sol = solUsd(at);
+      for (const x of j) { const s = fromJup(x, at, sol); if (s) { s.id = `j:${s.m}:${at}`; s.type = 'snapshot'; if (!s.valid) stats.invalid++; ingest(s); stats.jup++; } }
+    }
   }
   // RugCheck full reports for coins whose dev wallet share Jupiter does not report (one call at a time, RugCheck lane)
   const rcAsked = new Map();
@@ -197,14 +202,16 @@ function createRuntime({ core, clock, log, store, run, sha }) {
       return { id: A.id, exp: A.exp, kind: A.kind, legacy: A.legacy || null, name: A.name, desc: A.desc, P: A.P || null, cash: A.cash, rent: A.rent,
         startedAt: A.startedAt || S.startedAt, version: A.version || null, locked: A.locked || null, funnel: A.funnel || null, exposureMs: A.exposureMs || 0, underwaterMs: A.underwaterMs || 0,
         value: eq.value, lo: eq.lo, known: eq.known, mdd: A.mdd, n: A.n, pos: A.pos, pending: A.pending ? S.orders[A.pending] : null,
-        trades: A.trades.slice(-60), nTrades: A.trades.length, realized: A.trades.reduce((x, t) => x + t.net, 0), wins: A.trades.filter(t => t.net > 0).length,
-        eq: A.eq.filter((x, i, a) => i % Math.max(1, Math.ceil(a.length / 400)) === 0 || i === a.length - 1),
-        watch: Object.values(A.watch).filter(w => !w.done || at - Math.min(w.to, at) < 1800e3).map(w => ({ m: w.m, from: w.from, to: w.to, armed: w.armed, trig: w.trig, done: w.done, dipAt: w.dipAt })),
-        fails: A.fails.slice(-20) };
+        trades: A.trades.slice(-30).map(slimTrade), nTrades: A.trades.length, realized: A.trades.reduce((x, t) => x + t.net, 0), wins: A.trades.filter(t => t.net > 0).length,
+        eq: A.eq.filter((x, i, a) => i % Math.max(1, Math.ceil(a.length / 300)) === 0 || i === a.length - 1),
+        watching: Object.values(A.watch).filter(w => !w.done && at < w.to).length, fails: A.fails.slice(-10) };
     };
-    // only coins an account watches, holds or traded recently, without their price history (the page draws its own charts)
+    // the trade audit as the page shows it (the full records are in v11-events on the research branch)
+    const slimTrade = t => { const x = Object.assign({}, t); delete x.qty; delete x.exp; if (x.v2) x.v2 = Object.assign({}, x.v2, { plan: x.v2.plan && { size: x.v2.plan.size, horizonMin: x.v2.plan.horizonMin, maxLoss: x.v2.plan.maxLoss,
+      lossAtLimit: x.v2.plan.lossAtLimit, worstCase: x.v2.plan.worstCase, worstWhy: x.v2.plan.worstWhy, roundTripCost: x.v2.plan.roundTripCost } }); return x; };
+    // coins an account holds, is ordering or traded recently, without their price history (the page draws its own charts)
     const used = new Set();
-    for (const A of Object.values(S.accts)) { if (A.pos) used.add(A.pos.m); for (const w of Object.values(A.watch)) if (!w.done || at - Math.min(w.to, at) < 1800e3) used.add(w.m); for (const t of A.trades.slice(-10)) used.add(t.m); }
+    for (const A of Object.values(S.accts)) { if (A.pos) used.add(A.pos.m); if (A.pending && S.orders[A.pending]) used.add(S.orders[A.pending].m); for (const t of A.trades.slice(-30)) used.add(t.m); }
     const coins = {};
     for (const m of used) { const c = S.coins[m]; if (!c) continue;
       coins[m] = { m, sym: c.sym, name: c.name, xAt: c.xAt, bc: c.bc, stage: c.stage, hi: c.hi && { p: c.hi.p, at: c.hi.at }, last: c.last && { p: c.last.p, ps: c.last.ps, at: c.last.at, src: c.last.src },
@@ -215,7 +222,7 @@ function createRuntime({ core, clock, log, store, run, sha }) {
         mq: c.mq ? { at: c.mq.at, ok: c.mq.ok, impact: c.mq.impact, err: c.mq.err } : null, routeLostAt: c.routeLostAt || null, deadAt: c.deadAt || null,
         dossier: NARR.dossier(c, S.crosses, at, { approved: false }) }; }
     const log = S.log.filter(e => !/^(QuoteIgnored|DataInvalid)$/.test(e.type)).slice(-80).map(e => e.type === 'EligibilityDecided' ? Object.assign({}, e, { gates: undefined, failed: (e.gates || []).filter(g => g[1] !== 'pass').map(g => g[0]) }) : e);
-    return { v: S.v, startedAt: S.startedAt, lastAt: S.lastAt, run: S.run, halted: S.halted, gaps: S.gaps.slice(-20), lastFeedAt: S.lastFeedAt,
+    return { v: S.v, startedAt: S.startedAt, upgradedAt: S.upgradedAt || null, archive: S.archive || [], lastAt: S.lastAt, run: S.run, halted: S.halted, gaps: S.gaps.slice(-20), lastFeedAt: S.lastFeedAt,
       accts: Object.values(S.accts).map(acct), coins, log, stats };
   }
   async function flush(force, put) {
@@ -240,9 +247,9 @@ function createRuntime({ core, clock, log, store, run, sha }) {
     }
   }
   function start(L) {
-    L(() => pollDex('fast'), 5000, 'v11-dex');
+    L(() => pollDex('fast'), 10000, 'v11-dex');          // 11.1: DexScreener is the fallback price and the venue
     L(() => pollDex('slow'), 30000, 'v11-dex-slow');
-    L(pollJup, 20000, 'v11-jup');
+    L(pollJup, 12000, 'v11-jup');
     L(pollRcReports, 5000, 'v11-rcreport');
     L(async () => { tick(); }, 5000, 'v11-tick');
   }

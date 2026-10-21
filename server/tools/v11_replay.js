@@ -1,6 +1,6 @@
 'use strict';
 /* Replays recorded v11 inputs (the .jsonl.gz files under v11-inputs/) through the engine.
-     node server/tools/v11_replay.js <dir> [--state <v11.json>]
+     node server/tools/v11_replay.js <dir> [--state <v11.json>] [--from-load k]
    <dir> holds a v11-inputs/ folder (a checkout of the research branch, or a sim output folder). Every server run after
    the first must load exactly the state the replay rebuilt for it, and with --state the last save that reached the data
    branch must equal that file. Prints "V11 REPLAY EXACT" when everything matches. */
@@ -14,11 +14,11 @@ function files(dir) {
   return out.sort();
 }
 function main() {
-  const dir = process.argv[2], si = process.argv.indexOf('--state');
+  const dir = process.argv[2], si = process.argv.indexOf('--state'), fi = process.argv.indexOf('--from-load');
   const list = files(path.join(dir, 'v11-inputs'));
   if (!list.length) { console.log('no v11 inputs under', dir); process.exit(1); }
   const t = Date.now();
-  const r = REC.replayExact(list.map(f => fs.readFileSync(f)));
+  const r = REC.replayExact(list.map(f => fs.readFileSync(f)), { fromLoad: fi > 0 ? +process.argv[fi + 1] : 0 });
   for (const v of r.versions) console.log(`  recorded by ${v.info.sha || '?'} (engine ${v.info.engine}, run ${v.info.run}) from ${new Date(v.at).toISOString()}`);
   if (new Set(r.versions.map(v => v.info.sha)).size > 1) console.log('  note: more than one code version recorded these inputs; replay each stretch with its own commit (git worktree)');
   let ok = r.loads > 0;

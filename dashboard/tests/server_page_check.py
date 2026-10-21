@@ -81,7 +81,7 @@ def main():
     v11 = st.get("v11")
     if v11:
         R.pg.click("#t-v11"); R.advance(3, step=1)
-        rows = R.pg.evaluate("document.querySelectorAll('#v11Accts tbody tr').length")
+        rows = R.pg.evaluate("document.querySelectorAll('#v11Accts > table > tbody > tr').length")
         pill = R.pg.inner_text("#v11Pill")
         print(f"v11 tab: {rows} account rows (state has {len(v11['accts'])}), status '{pill}'")
         ok = ok and rows == len(v11["accts"]) and pill in ("Forward paper", "Incomplete data")

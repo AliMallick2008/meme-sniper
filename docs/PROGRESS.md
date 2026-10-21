@@ -42,3 +42,11 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   the Jupiter quote 2 s later: DexScreener prices can lag the executable quote in fast markets. Post-lock observations
   (not applied) are in research/v2_protocol.md; research-only parameters for them (P.volCap, P.r1Max, unset in v2.0)
   and ablation variants `~volcap` and `~nospike` were added. Inputs now carry the recording code's commit ('V' line).
+- Oct 21 ~4:00 PM ET: engine 11.1 deployed. Measured on the live recording: DexScreener's price lags Jupiter's by a median
+  46 s (p10 14 s, p90 107 s); 17% of Jupiter/DexScreener pairs differed by more than 10%. Under 11.0 that produced spurious
+  exits (9 of A's 23 trades sold within 6 s of the buy on a stale price). 11.1: Jupiter-first prices with data times,
+  polled every 12 s (up to 200 coins), DexScreener every 10 s as fallback and venue, no older data over newer, priceAt
+  only from accepted prices; on load an 11.0 state is archived and every account restarts. Also: recorded Jupiter
+  snapshots trimmed to used fields (recording was 2.3 MB/h gzipped), state.json view slimmed (was 1.2 MB). The GeckoTerminal
+  research recorder got no slots at all after 13:00 UTC (bots' candle queue never empty); the v11 recording now covers every
+  crossing, so the legacy research will move to it (protocol amendment pending).

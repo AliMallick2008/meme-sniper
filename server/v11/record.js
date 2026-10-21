@@ -141,15 +141,17 @@ function* decode(files) {
 /* Exact replay of recorded runs with the live code. The first load starts the engine from the recorded state; each later
    load (a new server run) restarts it from the last save that reached the data branch, trimmed exactly as the runtime
    trims it, and checks that this equals the state the live run loaded. Returns the engine and the checks. */
-function replayExact(files, { createEngine, onTick } = {}) {
+function replayExact(files, { createEngine, onTick, fromLoad = 0 } = {}) {
   createEngine = createEngine || require('./engine.js').createEngine;
   let eng = null, snaps = new Map(), committed = null, loads = 0, ticks = 0, events = 0;
+  // fromLoad: start at that run start (0 = the first); earlier stretches may need another commit's code
   const versions = [];
   const checks = [];
   for (const it of decode(files)) {
     if (it.k === 'version') { versions.push(it); continue; }
     if (it.k === 'load') {
       loads++;
+      if (loads - 1 < fromLoad) continue;
       if (!eng) {
         eng = createEngine();
         if (it.state && it.state.v && it.state.accts) eng.load(unpack(roundTrip(it.state)));

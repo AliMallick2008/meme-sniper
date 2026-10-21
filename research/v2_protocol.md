@@ -114,3 +114,13 @@ the recorded window and judged on the last 40%, as section 4 says.
   (for example at 30%); skip entries right after a single-minute spike. The exit was decided on a model mark of about
   +16% (DexScreener price) and filled at +36% on the Jupiter quote: in fast markets the executable quote and the model can
   differ a lot, so replays (model fills) and live results must be compared with care.
+- Oct 21, 3:30 PM ET, engine 11.1 (data, not rules): the live recording showed DexScreener's price for these coins lagging
+  Jupiter's by about 46 s (median of 192 matched price changes; p10 14 s, p90 107 s; 10-25% apart in 17% of the pairs
+  received close together), and engine 11.0 took whichever price arrived last. The effect on v2.0 under 11.0 (12:12-4:00 PM
+  ET): 9 of A's 23 trades were sold within 6 seconds of the buy because a stale DexScreener price arrived just after the
+  fill and made the position look 15-45% down; the sale quotes came back near the buy price (realized -12% to +5%). B's
+  -60% (PUMPMINE) was a real collapse within 1.4 minutes. Engine 11.1 reads Jupiter first (its `updatedAt` is the data
+  time; polled every 12 s), uses DexScreener only as a fallback after a minute without Jupiter, and never lets older data
+  replace newer. The v2.0 rules are unchanged, but 11.0 results are not comparable, so every v11 account was archived
+  (visible in the v11 tab) and restarted with 10 SOL at the 11.1 start; the v2.0 forward record counts from there.
+  11.0 results for reference: A +0.191 SOL (23 trades, 8 wins), B -1.082 (7, 1 win), C -0.019 (1).

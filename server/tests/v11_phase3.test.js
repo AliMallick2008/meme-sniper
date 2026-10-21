@@ -142,3 +142,38 @@ test('RugCheck report parsing (probed Oct 21 2026): dev share from the creator b
   assert.ok(Number.isNaN(s.st.bov) && s.st.sov > 0, 'missing organic buy volume is unknown, not 0');
   assert.strictEqual(s.dev, '3vYwPy9ksuq6gUWRGR84tifJmetpWsTzKtPKtRL1xK2D');
 });
+
+test('engine 11.1: a lagging DexScreener price never overwrites a fresh Jupiter price; it is only a fallback', () => {
+  const MK = require('../v11/market.js');
+  const c = MK.newCoin({ m: M, at: T0, mcX: 7000, hiMc: 7000 });
+  const obs = (src, at, p, asOf) => Object.assign({ m: M, at, src, valid: true, p, ps: p / 100, mc: p * 1e9 }, src === 'jup' ? { asOf, st: {} } : { venue: 'curve' });
+  MK.observe(c, obs('dex', T0 + 1000, 7e-6));
+  assert.strictEqual(c.last.src, 'dex', 'no Jupiter price yet: DexScreener is used');
+  MK.observe(c, obs('jup', T0 + 5000, 9e-6, T0 + 4000));
+  assert.strictEqual(c.last.p, 9e-6, 'Jupiter takes over');
+  MK.observe(c, obs('dex', T0 + 6000, 7.2e-6));
+  assert.strictEqual(c.last.p, 9e-6, 'the lagging DexScreener price is ignored while Jupiter is recent');
+  assert.strictEqual(c.bars[c.bars.length - 1].l, 7e-6, 'and it does not enter the bars either');
+  MK.observe(c, obs('jup', T0 + 15000, 8e-6, T0 + 2000));
+  assert.strictEqual(c.last.p, 9e-6, 'an answer with older Jupiter data does not replace newer data');
+  MK.observe(c, obs('jup', T0 + 25000, 9e-6, T0 + 4000));
+  assert.strictEqual(c.last.at, T0 + 25000, 'the same data received again counts as confirmed now');
+  MK.observe(c, obs('dex', T0 + 25000 + MK.JUP_PRIMARY_MS + 1000, 6e-6));
+  assert.strictEqual(c.last.src, 'dex', 'after a minute without Jupiter, DexScreener is the fallback again');
+  assert.strictEqual(MK.priceAt(c, T0 + 6500), 9e-6, 'price history uses only accepted observations');
+});
+
+test('engine 11.1 upgrade: 11.0 accounts are archived with their marks and restart with 10 SOL', () => {
+  const { createEngine } = require('../v11/engine.js');
+  const old = createEngine(); old.init(T0); const S0 = old.state();
+  S0.v = '11.0'; S0.accts['A'].cash = 9.5; S0.accts['A'].trades.push({ net: -0.5 });
+  S0.orders.x = { id: 'x', acct: 'A', status: 'requested', reqAt: T0 };
+  const e = createEngine(); e.load(JSON.parse(JSON.stringify(S0)));
+  const S = e.state();
+  assert.strictEqual(S.v, '11.1');
+  assert.strictEqual(S.accts.A.cash, 10, 'fresh start');
+  const a = S.archive.find(x => x.acct === 'A');
+  assert.ok(a && a.engine === '11.0' && a.net === -0.5 && a.trades === 1, 'old result archived');
+  assert.strictEqual(S.orders.x.status, 'cancelled');
+  assert.ok(e.drain().some(x => x.type === 'EngineUpgraded'));
+});

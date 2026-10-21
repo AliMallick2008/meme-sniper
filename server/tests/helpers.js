@@ -96,7 +96,7 @@ function market({ coins, start = min(-1), stopAt, checksAfter = 30000, quoteDela
         const liq = c.liq ? c.liq(t) : null;
         e.ingest({ id: `d:${c.m}:${t}`, type: 'snapshot', m: c.m, at: t, src: 'dex', valid: true, p, ps: p / SOL_USD, mc, venue: v, pool: v === 'pool' ? 'POOL' + c.sym : null,
           liq: liq ? { usd: liq, base: null, quote: null } : null, dx: { b5: 10, s5: 5, v5: 1000, v1h: 9000 } });
-        if ((t - start) % 20000 === 0 && c.flow) {
+        if ((t - start) % 10000 === 0 && c.flow) {
           const fl = c.flow(t), f1 = c.flow1h ? c.flow1h(t) : { bv: 50000, sv: 40000, nnb: 20 };
           if (fl) e.ingest({ id: `j:${c.m}:${t}`, type: 'snapshot', m: c.m, at: t, src: 'jup', valid: true, p, ps: p / SOL_USD, mc, liqUsd: liq || mc / 10, holders: (c.holders || 120) + Math.floor((t - c.crossAt) / 60000),
             org: 50, asOf: t - 3000, st: Object.assign({ nb: 20, ns: 10, nob: NaN, hc: 2, lc: 0, pc: 0 }, fl), st1h: Object.assign({ nb: 200, ns: 150, tr: 300, nob: NaN, hc: 20 }, f1), audit: Object.assign({}, c.audit || GOOD_AUDIT, c.auditAt ? c.auditAt(t) : {}) });

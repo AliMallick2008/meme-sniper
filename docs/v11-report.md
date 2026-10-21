@@ -14,6 +14,7 @@ claims an edge before the evidence rules in `research/v2_protocol.md` are met.
 | 3 | Market intelligence: feature families, V2 strategies A/B/C with entry contracts, ranking, corroborated deterioration exits, RugCheck report as the second dev-wallet source; locked v2.0 | `features.js`, `v2.js`, `thesis.js`, `research/v2_protocol.md` |
 | 4 | Narrative layer without fabricated evidence: social "unavailable", launcher links "unverified claim", name-cluster score labeled as copycats, dossier | `narrative.js`, v11 tab |
 | 5 | Recording of every engine input with exact replay, ablation and baseline tool, v11 tab, this report | `record.js`, `server/tools/`, `dashboard/v11_ui.js` |
+| 11.1 | Jupiter-first prices with data times after measuring DexScreener's lag; 11.0 accounts archived, all restarted | `market.js`, `engine.js` |
 
 Acceptance tests T01-T20: `node --test server/tests/*.test.js` (T01 T02 T03 T10 T11 T12 T14 T15 in phase 1, T04 T07 T13
 T17 T18 T20 in phase 2, T05 T06 T16 in phase 3, T08 T09 T19 in phase 4), plus the recording replay test. The server sim
@@ -34,6 +35,13 @@ the live v11 state exactly across restarts.
 | GeckoTerminal | 1-minute OHLCV | legacy bots and the legacy research recorder only | lane adapts on 429 (about 6 calls/min from a GitHub runner) |
 
 Not used: the Solana public RPC (403), X and Telegram (no approved API).
+
+**Measured data lag (live, Oct 21 2026):** for pump.fun coins DexScreener's `priceUsd` lags Jupiter's price by a median
+46 s (p10 14 s, p90 107 s, from 192 DexScreener price changes matched to the Jupiter price with the same value); 17% of
+Jupiter/DexScreener pairs received close together differed by more than 10%. Jupiter's `updatedAt` is the time of its data
+and stays old for a coin with no trades (median age at receipt 106 s, p90 14 min across all followed coins). Under engine
+11.0 a stale DexScreener price arriving after a fill made 9 of A's first 23 positions look 15-45% down and sold them
+within 6 s; the sale quotes came back near the buy price. Engine 11.1 builds prices from Jupiter first.
 
 ## 3. Dataset provenance
 

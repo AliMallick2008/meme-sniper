@@ -99,3 +99,14 @@ live too, so both can be compared forward.
 - Separately, from v11 (Oct 21 2026) every input of the v11 engine is recorded (`v11-inputs/`, see
   `research/v2_protocol.md`): prices every 5 s for every crossed coin's first 20 minutes and every 30 s after that while
   it is alive, Jupiter order flow every 20 s, quotes, checks. That stream covers every crossing, not a sample.
+
+## Amendment 6 (Wed Oct 21 2026, 4:00 PM ET, no outcome analysis done)
+- After 13:00 UTC the GeckoTerminal recorder wrote nothing: it only uses GeckoTerminal slots the live bots leave free,
+  and their candle queue was never empty (the sampling of Amendment 5 kept the queue small, not the throughput up).
+- From engine 11.1 every crossing is recorded anyway, causally, as v11 inputs (`v11-inputs/`: Jupiter prices and order
+  flow every 12 s while a coin is in play, DexScreener as fallback, checks, quotes), and the v11 engine replays the legacy
+  rules on it (the E0 accounts, honest timing). So the research on rule changes moves to that recording: rule variants
+  are replayed with `server/tools/v11_ablation.js` on the recorded inputs from the 11.1 start, the first 60% of the time
+  window chooses and the last 40% judges, with the evidence minimums of `research/v2_protocol.md` (5 days, 30 trades per
+  variant) replacing the 1,000-crossing threshold of Amendment 4. The GeckoTerminal recorder keeps running when it gets
+  slots; its records stay usable for the candle-based checks of the original protocol.

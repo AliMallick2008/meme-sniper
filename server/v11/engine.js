@@ -14,7 +14,7 @@ const ST = require('./strategies.js');
 const V2 = require('./v2.js');
 const FT = require('./features.js');
 
-const VERSION = '11.0';
+const VERSION = '11.1';            // 11.1: Jupiter-first prices with data times (market.js); 11.0 accounts archived
 const GAP_MS = 90000;            // silence longer than this between server runs is a coverage gap
 const ORDER_TTL = 30000;         // an order with no quote by then fails
 const FEED_STALE_MS = 60000;     // no valid market data on any active coin for this long: entries halt
@@ -47,7 +47,29 @@ function createEngine(opts = {}) {
       eq: [[at, ST.START_SOL, ST.START_SOL]], peak: ST.START_SOL, mdd: 0, n: { orders: 0, fills: 0, fails: 0 } });
   }
   const save = () => JSON.parse(JSON.stringify(Object.assign({}, S, { outbox: [] })));
-  function load(s) { S = s; S.outbox = []; for (const a of accountDefs()) if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt); return S; }
+  function load(s) {
+    S = s; S.outbox = [];
+    if (S.v !== VERSION) upgrade(S.v);
+    for (const a of accountDefs()) if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt);
+    return S;
+  }
+  /* A saved state from an older engine: under 11.0 a lagging DexScreener price could overwrite a fresh Jupiter price,
+     so its results are not comparable with 11.1's. Every account is archived with its last mark and starts again with
+     10 paper SOL; orders in flight are cancelled. Coins, checks and coverage history are kept. */
+  function upgrade(from) {
+    const at = S.lastAt;
+    S.archive = S.archive || [];
+    for (const A of Object.values(S.accts)) {
+      const eq = equityValue(A);
+      S.archive.push({ engine: from, acct: A.id, name: A.name, from: A.startedAt || S.startedAt, to: at, value: eq.known ? +eq.v.toFixed(6) : null, lo: +eq.lo.toFixed(6),
+        cash: +A.cash.toFixed(6), trades: A.trades.length, wins: A.trades.filter(t => t.net > 0).length, net: +A.trades.reduce((x, t) => x + t.net, 0).toFixed(6),
+        open: A.pos ? { m: A.pos.m, sym: A.pos.sym, cost: A.pos.cost, mark: A.pos.mark ? A.pos.mark.value : null } : null });
+    }
+    for (const o of Object.values(S.orders)) if (o.status === 'requested') { o.status = 'cancelled'; o.reason = 'engine upgrade'; o.doneAt = at; }
+    S.accts = {};
+    log('EngineUpgraded', at, { from, to: VERSION, why: 'prices now come from Jupiter first (DexScreener lags about 46 s on these coins); every account restarts, earlier results are archived' });
+    S.v = VERSION; S.upgradedAt = at;
+  }
   function log(type, at, f) {
     const e = Object.assign({ type, at }, f);
     S.log.push(e); if (S.log.length > 1500) S.log.splice(0, S.log.length - 1500);

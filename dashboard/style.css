@@ -336,3 +336,6 @@ table.v11-trades tbody tr.on td { background: var(--accent-soft); }
 .v11-dl dt { color: var(--muted); }
 .v11-dl dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .v11-dl { grid-template-columns: minmax(0, 1fr); gap: 2px; } .v11-dl dd { margin-bottom: 6px; } }
+.v11-archive { margin-top: 10px; font-size: 13px; }
+.v11-archive summary { cursor: pointer; color: var(--muted); }
+.v11-archive table { margin-top: 6px; }
