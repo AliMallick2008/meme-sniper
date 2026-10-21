@@ -1,6 +1,6 @@
 # Read-only probe of the public market-data APIs from a GitHub runner (the same network the bots use).
-# Run by hand: gh workflow run probe.yml -f urls="https://... https://..."; the responses are in the job log.
-# Paper only: plain GET requests to public endpoints, no secrets, no wallets.
+# Dispatch with a space-separated list of public URLs; the responses are saved on the `probe` branch (probe.txt),
+# replacing the previous probe. Paper only: plain GET requests to public endpoints, no secrets, no wallets.
 name: probe
 on:
   workflow_dispatch:
@@ -9,7 +9,8 @@ on:
         description: space-separated public URLs to GET
         required: true
 permissions:
-  contents: read
+  contents: write
+concurrency: probe
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -19,9 +20,20 @@ jobs:
         env:
           URLS: ${{ inputs.urls }}
         run: |
+          : > probe.txt
           for u in $URLS; do
-            case "$u" in https://*) ;; *) echo "skip $u"; continue;; esac
-            echo "=== $u"
-            curl -sS -m 20 -A "meme-sniper-probe" -w "\nHTTP %{http_code}\n" "$u" | head -c 80000
-            echo
+            case "$u" in https://*) ;; *) echo "skip $u" >> probe.txt; continue;; esac
+            echo "=== $u" >> probe.txt
+            curl -sS -m 20 -A "meme-sniper-probe" -w "\nHTTP %{http_code}\n" "$u" 2>&1 | head -c 200000 >> probe.txt
+            echo >> probe.txt
           done
+          wc -c probe.txt
+      - name: save on the probe branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          git init -q out && cd out
+          git config user.name probe && git config user.email probe@users.noreply.github.com
+          cp ../probe.txt . && git add probe.txt && git commit -q -m "probe $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:refs/heads/probe
