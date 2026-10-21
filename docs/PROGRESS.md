@@ -42,3 +42,21 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   the Jupiter quote 2 s later: DexScreener prices can lag the executable quote in fast markets. Post-lock observations
   (not applied) are in research/v2_protocol.md; research-only parameters for them (P.volCap, P.r1Max, unset in v2.0)
   and ablation variants `~volcap` and `~nospike` were added. Inputs now carry the recording code's commit ('V' line).
+- Oct 21 ~2:30 PM ET: independent Python re-implementation of the E0 accounts and HOLD (`dashboard/tests/v11_e0_ref.py`,
+  written from the rules, not translated from server/v11) replays the recorded inputs with the server's restart rules
+  (last committed save, 20 bars rounded to 6 digits, seen cut to {at, pass}) and compares every E0/HOLD account, E0 order
+  and the coins they use (plus the crossings list and the dedup map), field for field. Results: the server sim (167,696
+  events, 41 E0 orders) matches at both run starts and at the end; a scripted market (`dashboard/tests/v11_e0_scenarios.js`:
+  35 checked paths, most of them ones the busy sim never reaches: failed, late, missing and repeated quotes, failed exits,
+  lost routes, graduation, invalid data, a 60 s data halt, restarts with orders in flight, a failed save, a 27 min outage,
+  5.7 quiet days; every save is kept so all 177 are compared) matches everywhere; real server data (3 input files,
+  138,139 events, 24 E0 orders incl. 2 real failed buys) matches the state run 39634954518 loaded at 16:27 UTC and, at the
+  end of the recording, the JS engine's own replay of the same inputs (`--live`: v11.json on the data branch runs ahead of
+  the hourly input upload). Mutation test: 40 rule changes planted in the Python copy (dip, fees, freshness, TTL,
+  cooldowns, exit retry, route loss, graduation, stop text rounding, slippage guard, restart trimming, dedup, NaN
+  impacts, time limit on the exact ms, crossing and dedup pruning...): all caught except 3 that cannot change any result
+  (guarded twice in the code).
+  A 4-reviewer self-review of the PR then tightened the check (see PR #2). The sim test now prints `ALL E0 MATCH`. Live E0 behaviours worth knowing (code is locked, nothing changed): no 6-coin watchlist limit;
+  a watch is armed once and never re-armed after a failed buy; GRN's dip time is never reset, so after a failed buy the
+  same old green minute triggers again; a coin marked "graduating" pauses every exit, the time limit included; a fill
+  can land after the 30 s order limit if no tick ran in between.

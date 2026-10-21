@@ -127,6 +127,7 @@ def main():
                 r = json.loads(l); sym.setdefault(r["m"], r.get("sym"))
     ok11 = v11_checks(DIR, o, J, sym)
     print("V11 CAUSAL CHECKS OK" if ok11 else "V11 CAUSAL CHECKS FAILED")
+    print("ALL E0 MATCH" if e0_ref_checks(DIR) else "E0 DIFFERS")
     srv.shutdown()
 
 
@@ -203,6 +204,22 @@ def v11_checks(DIR, o, J, sym):
     if rp.returncode != 0:
         print("   replay stderr:", rp.stderr[-800:])
     return not bad and rp.returncode == 0
+
+
+def e0_ref_checks(DIR):
+    """The live E0 and HOLD accounts against their independent Python re-implementation (v11_e0_ref.py): on this run's
+    recorded inputs, then on a scripted market that adds the failure paths the simulator never reaches (failed and late
+    quotes, failed exits, lost routes, graduation, invalid data, restarts with orders in flight, a failed save)."""
+    import v11_e0_ref as REF
+    print("v11 E0 vs the independent Python re-implementation:")
+    ok = REF.check(DIR)
+    scn = paths.out("v11_e0_scenarios")
+    g = subprocess.run(["node", os.path.join(REPO, "dashboard/tests/v11_e0_scenarios.js"), scn], capture_output=True, text=True)
+    for line in g.stdout.strip().splitlines():
+        print(line)
+    if g.returncode != 0:
+        print("   scenario stderr:", g.stderr[-800:])
+    return REF.check(scn) and g.returncode == 0 and ok
 
 
 if __name__ == "__main__":
