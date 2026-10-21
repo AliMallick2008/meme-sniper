@@ -19,6 +19,8 @@ function main() {
   if (!list.length) { console.log('no v11 inputs under', dir); process.exit(1); }
   const t = Date.now();
   const r = REC.replayExact(list.map(f => fs.readFileSync(f)));
+  for (const v of r.versions) console.log(`  recorded by ${v.info.sha || '?'} (engine ${v.info.engine}, run ${v.info.run}) from ${new Date(v.at).toISOString()}`);
+  if (new Set(r.versions.map(v => v.info.sha)).size > 1) console.log('  note: more than one code version recorded these inputs; replay each stretch with its own commit (git worktree)');
   let ok = r.loads > 0;
   console.log(`replayed ${list.length} files: ${r.loads} loads, ${r.events} events, ${r.ticks} ticks in ${((Date.now() - t) / 1000).toFixed(1)} s`);
   for (const c of r.checks) { console.log(`  run start ${new Date(c.at).toISOString()}: ${c.same ? 'loaded state matches the replay' : 'DIFFERENT: ' + c.detail}`); ok = ok && c.same; }

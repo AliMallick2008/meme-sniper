@@ -14,6 +14,7 @@
      ['s', at, n]          state save n taken (the runtime trims it with trimSave)
      ['S', at, n, ok]      save n reached the data branch (ok) or failed
      ['L', at, state]      a run loaded this state (null: fresh start)
+     ['V', at, info]       the code that recorded what follows ({ sha, engine, run }); replays should use that commit
      ['e', event]          crossing, audit, rugcheck, sol, quote or run_start event, as ingested
      ['d'|'j', i, k, vals] DexScreener / Jupiter snapshot of mint i (without m, id, type) as the values of shape k
      ['=', i, src, at]     the previous snapshot from src for mint i, unchanged, received again at `at` */
@@ -86,6 +87,7 @@ function recorder() {
     save: (at, n) => push(['s', at, n]),
     committed: (at, n, ok) => push(['S', at, n, ok]),
     load: (at, state) => push(['L', at, state || null]),
+    version: (at, info) => push(['V', at, info]),
     size: () => ({ lines: lines.length, bytes }),
     // hand over the buffered lines as one self-contained file (the dictionaries start again)
     take() { const out = lines; lines = []; mints = new Map(); shapes = new Map(); prev = new Map(); bytes = 0; return out; },
@@ -111,6 +113,7 @@ function* decode(files) {
         case 's': yield { k: 'save', at: x[1], n: x[2] }; break;
         case 'S': yield { k: 'commit', at: x[1], n: x[2], ok: x[3] }; break;
         case 'L': yield { k: 'load', at: x[1], state: x[2] }; break;
+        case 'V': yield { k: 'version', at: x[1], info: x[2] }; break;
         case 'e': yield { k: 'event', ev: x[1] }; break;
         case 'd': case 'j': {
           const m = mints[x[1]], key = x[1] + x[0], p = prev.get(key);
@@ -141,8 +144,10 @@ function* decode(files) {
 function replayExact(files, { createEngine, onTick } = {}) {
   createEngine = createEngine || require('./engine.js').createEngine;
   let eng = null, snaps = new Map(), committed = null, loads = 0, ticks = 0, events = 0;
+  const versions = [];
   const checks = [];
   for (const it of decode(files)) {
+    if (it.k === 'version') { versions.push(it); continue; }
     if (it.k === 'load') {
       loads++;
       if (!eng) {
@@ -164,7 +169,7 @@ function replayExact(files, { createEngine, onTick } = {}) {
     else if (it.k === 'save') snaps.set(it.n, roundTrip(trimSave(eng.save())));
     else if (it.k === 'commit') { if (it.ok && snaps.has(it.n)) committed = snaps.get(it.n); snaps.delete(it.n); }
   }
-  return { eng, checks, loads, ticks, events, lastSave: committed };
+  return { eng, checks, loads, ticks, events, lastSave: committed, versions };
 }
 function sameJSON(a, b) { return firstDiff(a, b) === null; }
 // path of the first difference between two JSON values (key order ignored), or null

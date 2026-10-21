@@ -81,7 +81,7 @@ function fromQuote(q) {
   return { valid: true, ok: true, inAmount: inA, outAmount: outA, impactPct: num(q.priceImpactPct), route, venue, slot: q.contextSlot || null };
 }
 
-function createRuntime({ core, clock, log, store, run }) {
+function createRuntime({ core, clock, log, store, run, sha }) {
   const now = () => clock.now();
   const eng = createEngine();
   const rec = REC.recorder();          // every engine input, in order: replayable exactly (record.js)
@@ -89,6 +89,7 @@ function createRuntime({ core, clock, log, store, run }) {
   const stats = { dex: 0, jup: 0, quotes: 0, quoteFails: 0, invalid: 0, flushed: 0, inLines: 0, inBytes: 0, fast: 0, slow: 0 };
 
   function load(saved) {
+    rec.version(now(), { sha: sha || null, engine: eng.VERSION, run });
     rec.load(now(), saved && saved.v && saved.accts ? saved : null);
     if (saved && saved.v && saved.accts) { eng.load(REC.unpack(saved)); log(`v11: resumed (started ${new Date(saved.startedAt).toISOString()})`); }
     else { eng.init(now()); log('v11: fresh start, every account 10 paper SOL'); }

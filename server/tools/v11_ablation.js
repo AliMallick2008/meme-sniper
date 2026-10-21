@@ -32,6 +32,11 @@ function variants() {
       ['random', { random: true }, 'same moments, a random coin that passed the gates']]) {
       out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, ablate: ab, P: Object.assign({}, a.P), C: Object.assign({}, a.C) }));
     }
+    // v2.1 candidates noted in research/v2_protocol.md (parameters only; same code)
+    const cand = [['volcap', { volCap: 0.30 }, 'structure threshold capped at 30%']];
+    if (a.strat === 'A') cand.push(['nospike', { r1Max: 0.25 }, 'no entry after a 25%+ minute']);
+    for (const [suf, extra, what] of cand)
+      out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, P: Object.assign({}, a.P, extra), C: Object.assign({}, a.C) }));
   }
   return out;
 }

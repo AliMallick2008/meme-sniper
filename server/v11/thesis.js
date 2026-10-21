@@ -26,7 +26,8 @@ function families(f, pos, c, at, P) {
     else {
       if (plan.invalidP && f.p < plan.invalidP) why.push(`price under the invalidation level (${plan.invalidWhy})`);
       const peak = pos.peakP || pos.entryP;
-      const ddPeak = peak ? 1 - f.p / peak : 0, need = Math.max(P.ddMin, 3 * (e.vol || f.vol || 0.04));
+      // P.volCap (research variants only; unset in v2.0): cap the volatility-scaled part of the threshold
+      const volNeed = 3 * (e.vol || f.vol || 0.04), ddPeak = peak ? 1 - f.p / peak : 0, need = Math.max(P.ddMin, P.volCap ? Math.min(volNeed, P.volCap) : volNeed);
       if (ddPeak >= need && f.lowerHighs === true) why.push(`lower highs and ${(ddPeak * 100).toFixed(0)}% off the post-entry high (more than ${(need * 100).toFixed(0)}% for this coin)`);
       if (P.supportBreak && e.low15 && f.p < e.low15) why.push('under the 15-minute low it had at entry');
       out.structure = { state: why.length ? 'flag' : 'ok', why, obs: c.last ? 'p' + c.last.at : null };

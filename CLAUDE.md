@@ -101,13 +101,17 @@ Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `d
 ET, `research/v2_protocol.md`) and run forward on the server. Phase 5: collect data, run the ablations on the recorded
 inputs, write `docs/v11-report.md`. The server sim also checks v11: `V11 CAUSAL CHECKS OK` and `V11 REPLAY EXACT`.
 
-## Status (Oct 21 2026, 4:45 AM ET)
+## Status (Oct 21 2026, 12:15 PM ET)
 
-- Server live since 4:19 AM ET (journal start). All five data sources healthy from the GitHub runner; first coins
-  passed the checks within minutes. Every bot started with 10 paper SOL.
+- Server live since 4:19 AM ET (journal start); natural handovers work (first at 10:55 AM ET). v11 runs beside the legacy
+  bots since 7:10 AM ET; V2 strategies A/B/C since 12:12 PM ET (commit 3939acf). A bought its first coin within a minute.
+- Legacy bots so far: none profitable (U30 about -2 SOL over 4 trades). Results live on the page (v11 tab compares E0,
+  V2, HOLD and the legacy bots).
 - BTC side (21 bots since Oct 16 8 PM ET, the Meme Coin Trader, the Solana Meme Trader) runs in the page by replaying
   Coinbase candles from fixed start times; nothing to run on a server. Results in `docs/PROJECT_NOTES.md`.
-- Next: (1) watch the first natural handover (~10:04 AM ET) and the first research files; (2) once 1,000 crossings are
-  recorded, run the sniper research per `research/sniper_protocol.md` Amendments 3 and 4 (first 60% choose, last 40%
-  judge) and only then propose a new locked version; (3) `state.json` grows with trades (~180 KB now): compact old
-  trades if it passes ~600 KB; (4) the stray branch `data-test` can be deleted.
+- Next: (1) after the next run boundary, download `v11-inputs/` and confirm `V11 REPLAY EXACT` on real data;
+  (2) once there are 5+ days and 30+ V2 trades per strategy, run `server/tools/v11_ablation.js` per
+  `research/v2_protocol.md` (first 60% choose, last 40% judge) and fill `docs/v11-report.md`; v2.1 candidates to test that
+  way (not applied): cap the volatility multiplier in the structure family (a 40%/min coin never flags), skip entries
+  after a single-minute spike (DOGGO was bought +61% in its last minute); (3) legacy research per Amendments 3-5 at 1,000
+  records; (4) the stray branches `data-test` and `probe` can be deleted.

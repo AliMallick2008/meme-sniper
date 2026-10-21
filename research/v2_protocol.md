@@ -102,3 +102,15 @@ days, not trades.
 E0 counterpart and HOLD after realistic costs on forward data, stays positive under drift 1% and latency 3 s, has no
 hidden drawdown or route-failure problem, and every trade can be explained from its contract. If none passes, the honest
 result is a research-grade simulator with no claimed edge.
+
+## Observations after the lock (recorded, not applied)
+
+Changes to v2.0 are never made in place. These notes list candidates for a v2.1 that would be chosen on the first 60% of
+the recorded window and judged on the last 40%, as section 4 says.
+
+- Oct 21, 12:12-12:16 PM ET, first live trade (A, DOGGO, +36% in 3 minutes, profit protection): bought at $26.7K after
+  +69% in 3 minutes and +61% in the last minute; the coin's 1-minute volatility was 41%, which makes the structure
+  family's threshold (3x volatility) 123%, so structure could never flag on such a coin. Candidates: cap that threshold
+  (for example at 30%); skip entries right after a single-minute spike. The exit was decided on a model mark of about
+  +16% (DexScreener price) and filled at +36% on the Jupiter quote: in fast markets the executable quote and the model can
+  differ a lot, so replays (model fills) and live results must be compared with care.

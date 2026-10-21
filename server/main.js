@@ -29,7 +29,7 @@ async function runServer(o) {
     onRugcheck: (k, reqAt, at) => { if (v11) v11.hooks.onRugcheck(k, reqAt, at); },
   });
   research = RESEARCH.create({ core, E, clock, log, put: store.putResearch, run: o.info.run });
-  v11 = V11.createRuntime({ core, clock, log, store, run: o.info.run });
+  v11 = V11.createRuntime({ core, clock, log, store, run: o.info.run, sha: o.info.sha });
 
   const st = await store.load();
   if (st) {

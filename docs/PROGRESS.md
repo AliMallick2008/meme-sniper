@@ -35,3 +35,10 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   creatorBalance and token.supply are raw units; Jupiter's `dev` wallet differs from RugCheck's creator, so both count.
   Jupiter leaves zero-valued fields out of its stats (numOrganicBuyers never present; holderChange is a percent).
   Phase 3 and 4 code + tests done (31 tests pass).
+- Oct 21 12:12 PM ET: phases 3-5 deployed (commit 3939acf). V2 A/B/C live; the server sim with the new code says ALL
+  BOTS MATCH, V11 CAUSAL CHECKS OK, V11 REPLAY EXACT; the page check says SERVER PAGE OK (v11 tab included).
+  First live V2 trade: A bought DOGGO at $26.7K (+69% in 3 min, 63% buys, 281 net buyers), sold 3 minutes later by
+  profit protection at +36% (+0.307 SOL). The exit was decided on a model mark of about +16% and filled +16.5% better on
+  the Jupiter quote 2 s later: DexScreener prices can lag the executable quote in fast markets. Post-lock observations
+  (not applied) are in research/v2_protocol.md; research-only parameters for them (P.volCap, P.r1Max, unset in v2.0)
+  and ablation variants `~volcap` and `~nospike` were added. Inputs now carry the recording code's commit ('V' line).

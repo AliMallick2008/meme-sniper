@@ -98,7 +98,7 @@ function hot(id, c, at) {
   return true;
 }
 // setup + demand checks from features f. Returns { setup: [...], demand: [...], score, parts, invalidP, invalidWhy }
-function evaluate(id, c, f, at) {
+function evaluate(id, c, f, at, P) {
   const s = [], d = [];
   let score = 0, parts = {}, invalidP = null, invalidWhy = null;
   if (id === 'A') {
@@ -107,6 +107,8 @@ function evaluate(id, c, f, at) {
     chk(s, 'r1', 'not falling in the last minute', f.r1, f.r1 >= 0, pct(f.r1));
     chk(s, 'dd', 'within 10% of its high', f.dd, f.dd <= 0.10, pct(f.dd));
     chk(s, 'green', 'last 1-minute bar green', f.greenBar, f.greenBar === true, f.greenBar);
+    // P.r1Max (research variants only; unset in v2.0): no entry right after a single-minute spike
+    if (P && P.r1Max) chk(s, 'spike', `up no more than ${Math.round(P.r1Max * 100)}% in the last minute`, f.r1, f.r1 <= P.r1Max, pct(f.r1));
     chk(d, 'buy', '58%+ of 5-minute volume is buys', f.buyShare5, f.buyShare5 >= 0.58, pct(f.buyShare5));
     chk(d, 'net', '3+ more buyers than sellers (5 min)', f.netBuyers5, f.netBuyers5 >= 3);
     chk(d, 'tr', '12+ traders (5 min)', f.traders5, f.traders5 >= 12);
@@ -168,7 +170,7 @@ function entry(A, at, coins, fc, cashFree, log) {
     const f = fc(c);
     if (f.p == null || f.priceAge > COMMON.priceFreshMs) continue;                       // timely data
     eligible.push({ c, f });
-    const ev = evaluate(id, c, f, at);
+    const ev = evaluate(id, c, f, at, P);
     if (!ev.setup.every(x => x.ok)) continue;
     bump(A, c.m, 2, 'setup');
     if (!ab.noDemand && (f.jupAge == null || f.jupAge > COMMON.jupFreshMs || !ev.demand.every(x => x.ok))) continue;
@@ -188,7 +190,7 @@ function entry(A, at, coins, fc, cashFree, log) {
     const pool = eligible.slice().sort((a, b) => (a.c.m < b.c.m ? -1 : 1));
     for (let k = 0; k < pool.length; k++) {
       const x = pool[Math.floor(rand(A.id + ':' + at + ':' + k) * pool.length)], sz = sizeFor(A, x.c, x.f, at, cashFree);
-      if (sz) { const ev2 = evaluate(id, x.c, x.f, at); cands.unshift({ c: x.c, f: x.f, ev: ev2, plan: sz.plan, rt: sz.rt, score: ev2.score - 20 * sz.rt, random: true }); break; }
+      if (sz) { const ev2 = evaluate(id, x.c, x.f, at, P); cands.unshift({ c: x.c, f: x.f, ev: ev2, plan: sz.plan, rt: sz.rt, score: ev2.score - 20 * sz.rt, random: true }); break; }
     }
   }
   const best = cands[0], { c, f, ev, plan, rt } = best;
