@@ -2020,15 +2020,16 @@ ${mtfPanel}
   function showTab(tab) {
     S.tab = tab;
     for (const x of document.querySelectorAll('.tabs button')) x.setAttribute('aria-selected', String(x.dataset.tab === tab));
-    for (const id of ['sniper', 'live', 'trades', 'research', 'rules']) $('p-' + id).hidden = id !== S.tab;
-    document.querySelector('.bar .seg').hidden = S.tab === 'sniper';
-    document.querySelector('.clock').hidden = S.tab === 'sniper';
+    for (const id of ['sniper', 'v11', 'live', 'trades', 'research', 'rules']) $('p-' + id).hidden = id !== S.tab;
+    document.querySelector('.bar .seg').hidden = S.tab === 'sniper' || S.tab === 'v11';
+    document.querySelector('.clock').hidden = S.tab === 'sniper' || S.tab === 'v11';
     if (S.tab === 'live' && S.out) { renderPriceChart(S.out); renderEquity(S.out); }
     if (S.tab === 'research') drawResearchChart();
     if (S.tab === 'sniper' && typeof SNIPER_UI !== 'undefined') SNIPER_UI.onShow();
+    if (S.tab === 'v11' && typeof V11_UI !== 'undefined') V11_UI.onShow();
     try { history.replaceState(null, '', '#' + tab); } catch (e) { /* file:// or sandboxed */ }
   }
-  { const h0 = location.hash.slice(1); const t0 = ['sniper', 'live', 'trades', 'research', 'rules'].includes(h0) ? h0 : 'sniper'; document.querySelector('.bar .seg').hidden = t0 === 'sniper'; document.querySelector('.clock').hidden = t0 === 'sniper'; if (t0 !== 'sniper') setTimeout(() => showTab(t0), 0); }
+  { const h0 = location.hash.slice(1); const t0 = ['sniper', 'v11', 'live', 'trades', 'research', 'rules'].includes(h0) ? h0 : 'sniper'; document.querySelector('.bar .seg').hidden = t0 === 'sniper' || t0 === 'v11'; document.querySelector('.clock').hidden = t0 === 'sniper' || t0 === 'v11'; if (t0 !== 'sniper') setTimeout(() => showTab(t0), 0); }
   $('feeOpts').addEventListener('click', e => {
     const b = e.target.closest('button[data-fee]'); if (!b) return;
     S.fee = b.dataset.fee;

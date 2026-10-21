@@ -5,6 +5,7 @@ const E = require('../sniper.js');
 
 const MAX_SNAPS = 150, MAX_BARS = 240;
 const GRAD_NEAR = 0.97;                       // curve this close to completion and no pool seen yet: "migrating"
+const DEAD_MC_USD = 5000, DEAD_AFTER_MS = 5 * 60000;   // under $5K market cap for 5 minutes straight: stop following
 
 function newCoin(ev) {
   return {
@@ -23,10 +24,20 @@ function observe(c, o) {
   if (c.invalid && c.invalid.src === o.src) c.invalid = null;
   c.snaps.push(o); if (c.snaps.length > MAX_SNAPS) c.snaps.splice(0, c.snaps.length - MAX_SNAPS);
   if (o.src === 'jup') c.jup = o;
+  if (o.p > 0 && (!c.hi || o.p > c.hi.p)) { c.hi = { p: o.p, at: o.at, src: o.src }; c.lo = null; }
+  // the heaviest 5-minute selling Jupiter reported since the current high (to tell whether selling has eased since)
+  if (o.src === 'jup' && o.st && isFinite(o.st.sv) && c.hi) {
+    if (!c.svPk || c.svPk.since !== c.hi.at) c.svPk = { v: o.st.sv, at: o.at, since: c.hi.at };
+    else if (o.st.sv > c.svPk.v) { c.svPk.v = o.st.sv; c.svPk.at = o.at; }
+  }
   if (o.p > 0) {
     c.last = { at: o.at, p: o.p, ps: o.ps > 0 ? o.ps : (c.last && c.last.ps > 0 && c.last.p > 0 ? c.last.ps * o.p / c.last.p : null), mc: o.mc, src: o.src };
-    if (!c.hi || o.p > c.hi.p) c.hi = { p: o.p, at: o.at, src: o.src };
+    if (o.p < c.hi.p && (!c.lo || o.p < c.lo.p)) c.lo = { p: o.p, at: o.at };      // lowest price since the current high
     bar(c, o.at, o.p);
+    const mc = o.mc > 0 ? o.mc : o.p * E.SUPPLY;
+    if (mc >= DEAD_MC_USD) c.lowSince = null;
+    else if (!c.lowSince) c.lowSince = o.at;
+    else if (!c.deadAt && o.at - c.lowSince >= DEAD_AFTER_MS) c.deadAt = o.at;
   }
   if (o.venue === 'pool') { if (c.stage !== 'pool') { c.stage = 'pool'; c.stageAt = o.at; } if (o.pool) c.pool = o.pool; }
   else if (o.venue === 'curve' && c.stage !== 'pool') {
@@ -51,4 +62,13 @@ function solAt(sol, t, maxMs = 5 * 60000) {
   for (const x of sol) if (x.at <= t && (!best || x.at > best.at)) best = x;
   return best && t - best.at <= maxMs ? best.usd : null;
 }
-module.exports = { newCoin, observe, doneBars, fresh, solAt, MAX_SNAPS };
+// price at time t, from observations received at or before t: the latest snapshot within a minute of t, else the
+// close of the last 1-minute bar that ended by t (bars survive restarts, snapshots mostly do not), else null
+function priceAt(c, t) {
+  let best = null;
+  for (const s of c.snaps) if (s.p > 0 && s.at <= t && (!best || s.at > best.at)) best = s;
+  if (best && t - best.at <= 60000) return best.p;
+  for (let i = c.bars.length - 1; i >= 0; i--) { const b = c.bars[i]; if ((b.t + 60) * 1000 <= t) return b.c; }
+  return best ? best.p : null;
+}
+module.exports = { newCoin, observe, doneBars, fresh, solAt, priceAt, MAX_SNAPS, DEAD_MC_USD };

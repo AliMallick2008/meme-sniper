@@ -142,18 +142,27 @@ def v11_checks(DIR, o, J, sym):
     seen = {(e["type"], e.get("id"), e["at"]) for e in evs}
     evs += [e for e in v["log"] if (e["type"], e.get("id"), e["at"]) not in seen]
     evs.sort(key=lambda e: e["at"])
+    # the eligibility state of each (account, coin) over time: E0 decides once, V2 logs every change
     elig = {}
     for e in evs:
-        if e["type"] == "EligibilityDecided" and e.get("pass"):
-            elig[(e["acct"], e["m"])] = e["eligibleAt"]
+        if e["type"] == "EligibilityDecided":
+            elig.setdefault((e["acct"], e["m"]), []).append((e["eligibleAt"], bool(e.get("pass"))))
+    def eligible_at(acct, m, t):
+        st = [x for x in sorted(elig.get((acct, m), [])) if x[0] <= t]
+        return st[-1][0] if st and st[-1][1] else None
     gaps = [(e["from"], e["to"]) for e in evs if e["type"] == "CoverageGap"]
     reqs = {e["id"]: e for e in evs if e["type"] == "OrderRequested"}
     bad = []
     for e in evs:
         if e["type"] == "OrderRequested" and e["side"] == "buy":
-            ea = elig.get((e["acct"], e["m"]))
-            if ea is None or e["at"] < ea:
-                bad.append(("buy before eligible", e["acct"], sym.get(e["m"]), e["at"], ea))
+            ea = eligible_at(e["acct"], e["m"], e["at"])
+            if ea is None:
+                bad.append(("buy while not eligible", e["acct"], sym.get(e["m"]), e["at"]))
+            c = e.get("contract")
+            if c is not None:   # V2: the entry contract must rest on data received before the decision
+                f = c.get("f", {})
+                if not (f.get("priceAt", 0) <= e["at"] and (f.get("jupAt") or 0) <= e["at"] and all(g[1] == "pass" for g in c.get("gates", []))):
+                    bad.append(("V2 contract uses later data or an unpassed gate", e["acct"], sym.get(e["m"]), e["at"]))
         if e["type"] in ("OrderFilled", "PositionClosed"):
             if any(a < e["at"] < b for a, b in gaps):
                 bad.append(("fill inside a coverage gap", e.get("acct"), e["at"]))
@@ -185,7 +194,15 @@ def v11_checks(DIR, o, J, sym):
                   f"E0 decided {b['decidedAt'] / 1000 - T0:+6.0f} s filled {b['openAt'] / 1000 - T0:+6.0f} s out {b['closeAt'] / 1000 - T0:+6.0f} s {b['exitReason']:<4} {b['net']:+.3f}")
     sz = o.get("sizes", {})
     print("   saved sizes:", {k: v for k, v in sz.items()})
-    return not bad
+    # every engine input was recorded: replaying them rebuilds each run's starting state and the final saved state exactly
+    ins = glob.glob(f"{DIR}/v11-inputs/**/*.gz", recursive=True)
+    print(f"   recorded inputs: {len(ins)} files, {sum(os.path.getsize(f) for f in ins) / 1e6:.2f} MB gzipped")
+    rp = subprocess.run(["node", os.path.join(REPO, "server/tools/v11_replay.js"), DIR, "--state", f"{DIR}/v11.json"], capture_output=True, text=True)
+    for line in rp.stdout.strip().splitlines():
+        print("   " + line)
+    if rp.returncode != 0:
+        print("   replay stderr:", rp.stderr[-800:])
+    return not bad and rp.returncode == 0
 
 
 if __name__ == "__main__":

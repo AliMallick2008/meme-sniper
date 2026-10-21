@@ -27,16 +27,23 @@ server/                 the Meme Sniper server (Node 22, no dependencies)
   main.js               server loop (state saves, research, handover)
   run.js                GitHub Actions entry
   gitstore.js           state on the `data` branch, research on the `research` branch
-  research.js           records every $7K crossing with its checks and final 1-minute candles
+  research.js           records $7K crossings (all that passed a bot's checks + 1 in 24 others) with final 1-min candles
   sim.js                the same loop on a virtual clock against a mock market (tests)
+  v11/                  the honest paper engine beside the legacy bots (audit Section E): engine.js (pure, event-driven),
+                        runtime.js (polling, validation, quotes, RugCheck reports), market/features/gates/model/fees/risk,
+                        strategies.js (E0 = legacy rules with honest timing, HOLD), v2.js + thesis.js (V2 strategies A/B/C,
+                        LOCKED v2.0), narrative.js (social = unavailable, claims unverified), record.js (input recording + exact replay)
+  tools/                v11_replay.js (replay recorded inputs exactly), v11_ablation.js (ablations and baselines)
 dashboard/              the web page (one self-contained HTML file)
-  page.html style.css engine.js meme.js ui.js sniper_ui.js research.json
+  page.html style.css engine.js meme.js ui.js sniper_ui.js v11_ui.js (the v11 tab) research.json
   build.py              -> dashboard/dist/btc-paper-lab.html, dist/site/ (GitHub Pages), dist/btc-paper-lab-site.zip (Netlify)
   vendor/               TradingView Lightweight Charts 4.2.3 (Apache-2.0)
   tests/                Python + Playwright tests, Python reference implementation, fixtures
 research/               research protocols
 docs/PROJECT_NOTES.md   full history and current numbers
-.github/workflows/      sniper.yml (bots), watchdog.yml (restarts), dashboard.yml (builds + publishes the page)
+.github/workflows/      sniper.yml (bots), watchdog.yml (restarts), dashboard.yml (builds + publishes the page),
+                        probe.yml (read-only GET of public APIs from a runner; output on the `probe` branch, since job logs
+                        and this container cannot reach those APIs directly)
 ```
 
 `server/sniper.js` and `server/sniper_core.js` are the only copies: `dashboard/build.py` inlines them into the page, so
@@ -51,8 +58,11 @@ the page's local mode and the server run identical code.
 - **State:** branch `data`, one force-pushed commit with no history: `state.json` (what the page reads: `srv` health
   info + journal `J`), `young.json` (coins being followed), `rq.json` (research queue), `tc/<mint>.json` (chart candles
   of traded coins). Never hand-edit it while a run is going.
-- **Research:** branch `research`, gzipped JSON lines, one file per hour per run: every coin that crossed $7K, its
-  point-in-time checks, and its final 1-minute candles from launch to 2 h after the crossing (+ SOL/USD per minute).
+- **Research:** branch `research`, gzipped JSON lines, one file per hour per run: sampled coins that crossed $7K (all
+  that passed a bot's checks + 1 in 24 others, protocol Amendment 5), their point-in-time checks, and their final
+  1-minute candles from launch to 2 h after the crossing (+ SOL/USD per minute). Plus `v11-events/` (every v11 decision)
+  and `v11-inputs/` (every v11 engine input: replay with `node server/tools/v11_replay.js <dir>`; ablations with
+  `node server/tools/v11_ablation.js <dir>`).
 - **Page:** https://alimallick2008.github.io/meme-sniper/ (branch `gh-pages`, published by `dashboard.yml` on every
   push to `main` that touches the page or the engine). Server mode reads `state.json` from the GitHub API (60 calls/h
   per IP without login; the page uses about 40) and falls back to raw.githubusercontent.com. Live charts and prices come
@@ -87,7 +97,9 @@ Deploy = push to `main`: the dashboard workflow publishes the page, and the runn
 ## Current work
 
 Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in
-`docs/PROGRESS.md`. Resume from PROGRESS.md.
+`docs/PROGRESS.md`. Resume from PROGRESS.md. Phases 0-4 are done; V2 strategies A/B/C are locked (v2.0, Oct 21 12:00 PM
+ET, `research/v2_protocol.md`) and run forward on the server. Phase 5: collect data, run the ablations on the recorded
+inputs, write `docs/v11-report.md`. The server sim also checks v11: `V11 CAUSAL CHECKS OK` and `V11 REPLAY EXACT`.
 
 ## Status (Oct 21 2026, 4:45 AM ET)
 

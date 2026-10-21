@@ -11,6 +11,8 @@ const G = require('./gates.js');
 const X = require('./model.js');
 const FEES = require('./fees.js');
 const ST = require('./strategies.js');
+const V2 = require('./v2.js');
+const FT = require('./features.js');
 
 const VERSION = '11.0';
 const GAP_MS = 90000;            // silence longer than this between server runs is a coverage gap
@@ -20,27 +22,32 @@ const MAX_SLIP = { buy: 0.10, sell: 0.60 };   // worst accepted quote vs the dec
 const DEC = 6;                   // pump.fun token decimals
 const KEEP_COIN_MS = 3 * 3600e3; // coins nobody holds or watches are dropped after this
 const EQ_EVERY = 120000;         // equity point spacing
-const DEDUP = new Set(['crossing', 'audit', 'rugcheck', 'quote']);
+const DEDUP = new Set(['crossing', 'audit', 'rugcheck', 'quote', 'rcreport']);
 const MARK_Q_CURVE = 60000, MARK_Q_POOL = 30000;   // executable sell quote for each held coin this often
 const ROUTE_LOST_AFTER = 2;                       // consecutive failed sell quotes before a coin counts as unsellable
-const DROP_UNWATCHED_MS = 20 * 60000;   // a crossed coin no account watches or holds is forgotten after this
+const DROP_UNWATCHED_MS = 20 * 60000;   // a crossed coin no account watches or holds is forgotten after this (unless alive)
+const FAST_YOUNG_MS = 20 * 60000;       // every crossed coin gets 5 s prices for its first 20 minutes
+const FOLLOW_MS = 3 * 3600e3, FOLLOW_POOL_MS = 8 * 3600e3;   // then 30 s prices while alive: 3 h, or 8 h once it trades on a pool
+const alive = (c, at) => !c.deadAt && (at - c.xAt < FOLLOW_MS || (c.stage === 'pool' && at - c.xAt < FOLLOW_POOL_MS));
 
-function createEngine() {
+// opts.accounts: the account set (default: the 7 E0 accounts, HOLD, and V2 A/B/C); replays use it for ablations
+function createEngine(opts = {}) {
   let S = null;
+  const accountDefs = opts.accounts || (() => ST.accounts().concat(V2.accounts()));
 
   // ------------------------------------------------------------------------------------------------ state
   function init(at) {
     S = { v: VERSION, startedAt: at, lastAt: at, run: null, runs: [], coins: {}, crosses: [], sol: [], accts: {}, orders: {}, seen: {},
       log: [], outbox: [], gaps: [], halted: null, lastFeedAt: 0, nOrders: 0 };
-    for (const a of ST.accounts()) S.accts[a.id] = newAccount(a, at);
+    for (const a of accountDefs()) S.accts[a.id] = newAccount(a, at);
     return S;
   }
   function newAccount(a, at) {
-    return Object.assign({}, a, { cash: ST.START_SOL, rent: 0, pos: null, pending: null, watch: {}, seen: {}, trades: [], fails: [],
+    return Object.assign({}, a, { startedAt: at, cash: ST.START_SOL, rent: 0, pos: null, pending: null, watch: {}, seen: {}, trades: [], fails: [],
       eq: [[at, ST.START_SOL, ST.START_SOL]], peak: ST.START_SOL, mdd: 0, n: { orders: 0, fills: 0, fails: 0 } });
   }
   const save = () => JSON.parse(JSON.stringify(Object.assign({}, S, { outbox: [] })));
-  function load(s) { S = s; S.outbox = []; for (const a of ST.accounts()) if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt); return S; }
+  function load(s) { S = s; S.outbox = []; for (const a of accountDefs()) if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt); return S; }
   function log(type, at, f) {
     const e = Object.assign({ type, at }, f);
     S.log.push(e); if (S.log.length > 1500) S.log.splice(0, S.log.length - 1500);
@@ -60,6 +67,7 @@ function createEngine() {
       case 'crossing': return crossing(ev);
       case 'audit': return audit(ev);
       case 'rugcheck': return rugcheck(ev);
+      case 'rcreport': return rcreport(ev);
       case 'snapshot': return snapshot(ev);
       case 'sol': S.sol.push({ at: ev.at, usd: ev.usd }); if (S.sol.length > 600) S.sol.splice(0, S.sol.length - 600); return [];
       case 'quote': return quote(ev);
@@ -104,6 +112,17 @@ function createEngine() {
     admit(c);
     return [];
   }
+  // the RugCheck full report: a second source for the dev wallet share (Jupiter leaves it out for most coins)
+  function rcreport(ev) {
+    const c = S.coins[ev.m]; if (!c) return [];
+    const r = { reqAt: ev.reqAt, at: ev.at, valid: ev.valid !== false, reason: ev.reason || null };
+    if (r.valid) Object.assign(r, { creatorPct: ev.creatorPct, devWallet: ev.devWallet, devWalletPct: ev.devWalletPct, devHow: ev.devHow, devBound: ev.devBound, devPct: ev.devPct,
+      top10: ev.top10, totalHolders: ev.totalHolders, insiders: ev.insiders, risks: ev.risks, score: ev.score, rugged: ev.rugged });
+    if (r.valid || !c.rcr) c.rcr = r;
+    c.rcrTries = (c.rcrTries || 0) + 1;
+    log('RugCheckReportReceived', ev.at, { m: ev.m, reqAt: ev.reqAt, valid: r.valid, devPct: r.devPct, how: r.devHow, reason: r.reason });
+    return [];
+  }
   // a coin becomes eligible for an account only once every input its gates need has been received
   function admit(c) {
     if (!c.audit || !c.rc) return;
@@ -129,6 +148,7 @@ function createEngine() {
     const id = `${A.id}:${sig.m}:${side}:${at}`;
     const o = { id, acct: A.id, exp: A.exp, m: sig.m, sym: c.sym, side, reqAt: at, status: 'requested', why: sig.why, reason: sig.reason || null,
       decision: { at, sigAt: sig.sigAt || at, p: sig.p, ps: sig.ps, priceAge: c.last ? at - c.last.at : null, venue } };
+    if (sig.contract) o.contract = sig.contract;
     if (side === 'buy') {
       o.size = Math.min(sig.size || A.stake || 1, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol, (A.sizeCap && A.sizeCap[sig.m]) || Infinity);
       if (A.minStake && o.size < A.minStake) { log('EntrySkipped', at, { acct: A.id, m: sig.m, why: `size cap ${o.size.toFixed(2)} SOL is under the minimum stake: too thin` }); return null; }
@@ -138,7 +158,7 @@ function createEngine() {
       o.decision.expectOut = X.sellOut(o.size, sig.ps, venue, at).sol;
     }
     S.orders[id] = o; A.pending = id; A.n.orders++; S.nOrders++;
-    log('OrderRequested', at, { id, acct: A.id, m: o.m, sym: o.sym, side, size: o.size, why: o.why, decision: o.decision });
+    log('OrderRequested', at, { id, acct: A.id, m: o.m, sym: o.sym, side, size: o.size, why: o.why, decision: o.decision, contract: o.contract || undefined, thesis: side === 'sell' && A.pos.thesis ? A.pos.thesis : undefined });
     return { type: 'quote', orderId: id, m: o.m, side, amount: side === 'buy' ? Math.round(o.size * 1e9) : Math.floor(o.size * 10 ** DEC), venue };
   }
   function cancel(o, why, at) {
@@ -151,7 +171,7 @@ function createEngine() {
     const A = S.accts[o.acct];
     if (A.pending === o.id) A.pending = null;
     A.n.fails++; A.fails.push({ at, id: o.id, m: o.m, sym: o.sym, side: o.side, why }); if (A.fails.length > 100) A.fails.shift();
-    if (o.side === 'buy') { const w = A.watch[o.m]; if (w) w.failUntil = at + 60000; }
+    if (o.side === 'buy') { const w = A.watch[o.m]; if (w) w.failUntil = at + 60000; if (A.kind === 'v2') { A.cool = A.cool || {}; A.cool[o.m] = Math.max(A.cool[o.m] || 0, at + 60000); } }
     else if (A.pos) { A.pos.exitFail = { at, why, n: ((A.pos.exitFail && A.pos.exitFail.n) || 0) + 1 }; A.pos.state = 'exit_unavailable'; }
     log('OrderFailed', at, { id: o.id, acct: o.acct, m: o.m, side: o.side, why });
   }
@@ -179,6 +199,7 @@ function createEngine() {
       A.pos = { m: o.m, sym: o.sym, qty: tokens, cost: o.size + fee, rent, openAt: ev.at, orderId: o.id, sigAt: o.decision.sigAt, decidedAt: o.reqAt,
         entryPs: o.size / tokens, entrySpot: o.decision.ps, venue, route: ev.route, impact: ev.impactPct, state: 'holding', mark: null, mae: 0, mfe: 0, peak: o.size + fee, gapMs: 0 };
       if (A.P && A.P.sl && venue === 'curve' && (1 - A.P.sl) * o.decision.ps < E.CURVE_FLOOR) A.pos.stopUnreachable = true;   // legacy stop under the curve floor: can never trigger
+      if (o.contract) { A.pos.contract = o.contract; A.pos.entryP = o.decision.p; A.pos.peakP = o.decision.p; A.funnel && A.funnel.entered++; }
       const w = A.watch[o.m]; if (w) w.done = 'bought';
       o.status = 'filled'; o.doneAt = ev.at;
       o.fill = { at: ev.at, delayMs: ev.at - o.reqAt, quoteAt: ev.at, out: tokens, impact: ev.impactPct, route: ev.route, venue: ev.venue, slot: ev.slot, drift, networkFee: fee, rent };
@@ -194,6 +215,13 @@ function createEngine() {
       entryPs: p.entryPs, exitPs: (sol + fee) / (p.qty), entryRoute: p.route, exitRoute: ev.route, entryImpact: p.impact, exitImpact: ev.impactPct,
       exitReason: o.reason, exitWhy: o.why, mae: Math.min(p.mae, sol / p.cost - 1), mfe: Math.max(p.mfe, sol / p.cost - 1), gapMs: p.gapMs || 0, stopUnreachable: !!p.stopUnreachable,
       slipVsDecision: o.decision.expectOut > 0 ? sol / o.decision.expectOut - 1 : null, fees: { network: 2 * fee, drift, venue: 'inside quotes' } };
+    if (p.contract) {
+      const k = p.contract;
+      t.v2 = { setup: k.setup, why: (S.orders[p.orderId] || {}).why || null, score: k.rank.score, n: k.rank.n, plan: k.plan, f: { buyShare5: k.f.buyShare5, netBuyers5: k.f.netBuyers5, traders5: k.f.traders5, r3: k.f.r3, mc: k.f.mc },
+        thesis: p.thesis || null, alt: p.alt || null, peakRet: p.peak / p.cost - 1 };
+      A.cool = A.cool || {};
+      A.cool[p.m] = ev.at + (/^(thesis|emergency)$/.test(o.reason) ? 7 * 86400e3 : A.P.cooldownMin ? A.P.cooldownMin * 60000 : 30 * 60000);
+    }
     A.trades.push(t); A.pos = null; A.pending = null; A.n.fills++;
     o.status = 'filled'; o.doneAt = ev.at; o.fill = { at: ev.at, delayMs: ev.at - o.reqAt, out: sol, impact: ev.impactPct, route: ev.route, venue: ev.venue, slot: ev.slot };
     log('PositionClosed', ev.at, { acct: A.id, m: t.m, sym: t.sym, net: t.net, ret: t.ret, reason: t.exitReason, why: t.exitWhy, delayMs: o.fill.delayMs });
@@ -204,7 +232,7 @@ function createEngine() {
     const c = S.coins[ev.m];
     if (c && ev.side === 'sell' && !ev.transport) {   // a timeout or server error says nothing about the route
       const ok = ev.ok && ev.valid !== false;
-      c.mq = { at: ev.at, ok, err: ok ? null : (ev.err || ev.reason || 'no route'), route: ev.route || null, venue: ev.venue || null, qty: ev.inAmount / 10 ** DEC, sol: ok ? ev.outAmount / 1e9 : null };
+      c.mq = { at: ev.at, ok, err: ok ? null : (ev.err || ev.reason || 'no route'), route: ev.route || null, venue: ev.venue || null, qty: ev.inAmount / 10 ** DEC, sol: ok ? ev.outAmount / 1e9 : null, impact: ok && isFinite(ev.impactPct) ? ev.impactPct : null };
       if (ok) { if (c.routeLostAt) log('SellRouteRestored', ev.at, { m: c.m, sym: c.sym, after: ev.at - c.routeLostAt }); c.routeFails = 0; c.routeLostAt = null; }
       else { c.routeFails = (c.routeFails || 0) + 1; if (c.routeFails >= ROUTE_LOST_AFTER && !c.routeLostAt) { c.routeLostAt = ev.at; log('SellRouteLost', ev.at, { m: c.m, sym: c.sym, err: c.mq.err }); } }
     }
@@ -268,6 +296,8 @@ function createEngine() {
     if (at < S.lastAt) at = S.lastAt;
     S.lastAt = at;
     const reqs = [];
+    const fcache = new Map();      // features of each coin at this tick, shared by every strategy
+    fc = c => { let f = fcache.get(c.m); if (!f) { f = FT.features(c, at); fcache.set(c.m, f); } return f; };
     for (const o of Object.values(S.orders)) if (o.status === 'requested' && at - o.reqAt > ORDER_TTL) fail(o, 'no quote within 30 s', at);
     const active = Object.keys(S.coins).length > 0;
     const halted = active && at - S.lastFeedAt > FEED_STALE_MS;
@@ -296,7 +326,10 @@ function createEngine() {
             if (A.pos.exitFail && at - A.pos.exitFail.at < 15000) { /* wait before retrying a failed exit */ }
             else { const last = MK.fresh(c, at, ST.FRESH_MS) || c.last || {}; reqs.push(order(A, 'sell', { m: A.pos.m, p: last.p, ps: last.ps || A.pos.entrySpot, why: r.why, reason: r.exit, sigAt: at }, at)); A.pos.state = 'exit_pending'; }
           } else A.pos.state = A.pos.exitFail && A.pos.state === 'exit_unavailable' ? 'exit_unavailable' : r.state;
-          if (A.pos && A.pos.state !== prev) log('PositionReviewed', at, { acct: A.id, m: A.pos.m, sym: A.pos.sym, state: A.pos.state, why: r.why });
+          if (A.pos && (A.pos.state !== prev || (r.thesis && r.thesis.state !== (A.pos.lastThesis || 'healthy')))) {
+            if (r.thesis) A.pos.lastThesis = r.thesis.state;
+            log('PositionReviewed', at, { acct: A.id, m: A.pos.m, sym: A.pos.sym, state: A.pos.state, why: r.why, thesis: r.thesis ? r.thesis.families : undefined, exit: r.exit || undefined });
+          }
         }
       }
     }
@@ -310,12 +343,15 @@ function createEngine() {
     prune(at);
     return reqs;
   }
+  let fc = null;
   function entry(A, at) {
     if (A.kind === 'e0') return ST.e0Entry(A, at, S.coins);
+    if (A.kind === 'v2') return V2.entry(A, at, S.coins, fc, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol - 0.01, log);
     return null;
   }
   function review(A, c, at) {
     if (A.kind === 'e0') return ST.e0Review(A, A.pos, c, at);
+    if (A.kind === 'v2') return V2.review(A, A.pos, c, at, fc(c));
     return { hold: true, state: 'holding', why: '' };
   }
   function prune(at) {
@@ -325,23 +361,45 @@ function createEngine() {
     const keep = new Set();
     for (const A of accts()) { if (A.pos) keep.add(A.pos.m); for (const w of Object.values(A.watch)) if (!w.done || at - w.to < 3600e3) keep.add(w.m); }
     for (const A of accts()) for (const [m, w] of Object.entries(A.watch)) if (w.done && at - w.to > 6 * 3600e3) delete A.watch[m];
-    for (const [m, c] of Object.entries(S.coins)) if (!keep.has(m) && at - c.xAt > (Object.values(S.accts).some(A => A.watch[m]) ? KEEP_COIN_MS : DROP_UNWATCHED_MS)) delete S.coins[m];
+    for (const [m, c] of Object.entries(S.coins)) if (!keep.has(m) && !alive(c, at) && at - c.xAt > (Object.values(S.accts).some(A => A.watch[m]) ? KEEP_COIN_MS : DROP_UNWATCHED_MS)) delete S.coins[m];
     for (const A of accts()) for (const [m, s] of Object.entries(A.seen)) if (at - s.at > 3 * 3600e3) delete A.seen[m];
+    for (const A of accts()) if (A.kind === 'v2') {
+      for (const [m, x] of Object.entries(A.fun || {})) if (!S.coins[m] && at - x.at > 3600e3) delete A.fun[m];
+      for (const m of Object.keys(A.gateSeen || {})) if (!S.coins[m]) delete A.gateSeen[m];
+      for (const [m, t] of Object.entries(A.cool || {})) if (t < at && !S.coins[m]) delete A.cool[m];
+    }
   }
   // a hypothetical result for a coverage gap (e.g. a candle replay), kept apart from the forward ledger
   function addHypothetical(gapIndex, rec) { const g = S.gaps[gapIndex]; if (g) { g.hypo.push(Object.assign({ label: 'hypothetical: the server was not running' }, rec)); log('HypotheticalRecorded', S.lastAt, { gap: gapIndex, rec }); } }
-  // coins the runtime should keep fresh data on, most important first: held, ordering, watched, recently crossed
-  function wanted(at) {
-    const held = new Set(), watch = new Set();
+  // coins that need a RugCheck full report: alive, checked, Jupiter silent on the dev wallet share, none received yet
+  function wantReports(at) {
+    const out = [];
+    for (const c of Object.values(S.coins)) {
+      if ((c.rcr && c.rcr.valid) || (c.rcrTries || 0) >= 3 || !alive(c, at) || !c.audit) continue;
+      const a = (c.jup && c.jup.audit) || (c.audit.valid ? c.audit.fields : null);
+      if (a && a.devBalancePercentage != null) continue;
+      out.push(c.m);
+    }
+    return out.sort((x, y) => S.coins[y].xAt - S.coins[x].xAt);   // newest first
+  }
+  /* which coins the runtime should observe, and how often. fast (prices every 5 s, Jupiter flow every 20 s): held,
+     ordering, watched, and every coin in its first 20 minutes after crossing. slow (prices every 30 s): every other
+     crossed coin while it is alive (3 h after crossing, 8 h once on a pool, until it sits under $5K for 5 minutes).
+     Held coins come first. */
+  function pollPlan(at) {
+    const held = new Set(), fast = new Set(), slow = [];
     for (const A of accts()) {
       if (A.pos) held.add(A.pos.m);
       if (A.pending && S.orders[A.pending]) held.add(S.orders[A.pending].m);
-      for (const w of Object.values(A.watch)) if (!w.done && at < w.to) watch.add(w.m);
+      for (const w of Object.values(A.watch)) if (!w.done && at < w.to) fast.add(w.m);
     }
-    const recent = Object.values(S.coins).filter(c => at - c.xAt < 15 * 60000).map(c => c.m);
-    return { held: [...held], watch: [...watch].filter(m => !held.has(m)), recent: recent.filter(m => !held.has(m) && !watch.has(m)) };
+    const v2 = accts().filter(A => A.kind === 'v2');
+    for (const c of Object.values(S.coins)) if (at - c.xAt < FAST_YOUNG_MS || v2.some(A => V2.hot(A.strat, c, at))) fast.add(c.m);
+    for (const m of held) fast.delete(m);
+    for (const c of Object.values(S.coins)) if (!held.has(c.m) && !fast.has(c.m) && alive(c, at)) slow.push(c.m);
+    return { held: [...held], fast: [...held, ...fast], slow };
   }
   const equityNow = A => { const r = equityValue(A); return { value: r.known ? r.v : null, lo: r.lo, known: r.known }; };
-  return { init, load, save, ingest, tick, drain, addHypothetical, wanted, state: () => S, mark, equity, equityNow, VERSION };
+  return { init, load, save, ingest, tick, drain, addHypothetical, pollPlan, wantReports, state: () => S, mark, equity, equityNow, VERSION };
 }
-module.exports = { createEngine, VERSION, GAP_MS, ORDER_TTL, MAX_SLIP };
+module.exports = { createEngine, VERSION, GAP_MS, ORDER_TTL, MAX_SLIP, alive };

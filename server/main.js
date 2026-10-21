@@ -90,8 +90,12 @@ async function runServer(o) {
         core.prune();
         const J = core.J(), { tc, ...rest } = J;
         dirty = false; urgent = false;
-        await store.save({ state: { v: 1, exp: 'legacy-v10', srv: srvInfo(), J: rest, v11: v11.view() }, young: core.youngOut(), rq: research.out(), tc,
-          extra: { 'v11.json': v11.save() } });
+        const v11state = v11.save();
+        try {
+          await store.save({ state: { v: 1, exp: 'legacy-v10', srv: srvInfo(), J: rest, v11: v11.view() }, young: core.youngOut(), rq: research.out(), tc,
+            extra: { 'v11.json': v11state } });
+        } catch (e) { v11.committed(false); throw e; }
+        v11.committed(true);
         lastSave = nowMs();
       } catch (e) {
         dirty = true; urgent = urgent || wasUrgent; lastSave = nowMs() - saveEvery + 30000;

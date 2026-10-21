@@ -5,21 +5,39 @@
    coins the rules never saw. */
 const zlib = require('zlib');
 const DUE_S = 7500;
+/* GeckoTerminal leaves room for about 9 research coins an hour beside the bots, and about 80 coins an hour cross $7K
+   (Oct 21 2026). So from v10.2 the recorder keeps every coin that passed some bot's checks plus 1 in 24 of the others,
+   picked by a hash of the mint (it cannot depend on how the coin did), and never queues more than MAX_Q coins (the
+   oldest is dropped and counted). Research protocol Amendment 5. */
+const KEEP_EVERY = 24, MAX_Q = 300;
+function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h; }
+const passed = k => !!(k.ok && Object.values(k.ok).some(Boolean));
+const sampled = k => passed(k) || fnv(k.m) % KEEP_EVERY === 0;
 
 function create({ core, E, clock, log, put, run }) {
   const nowS = () => clock.now() / 1000;
   const r5 = v => +(+v).toPrecision(5);
-  let Q = [], buf = [], bufH = 0, part = 0, done = 0, failed = 0, files = 0, lastFlush = 0, nextTry = 0, flushing = false, lastErr = '';
+  let Q = [], buf = [], bufH = 0, part = 0, done = 0, failed = 0, files = 0, lastFlush = 0, nextTry = 0, flushing = false, lastErr = '', skipped = 0, dropped = 0;
   function snap(k) {
     return { m: k.m, sym: k.sym, name: k.name, t: k.t, x: k.x, mcX: k.mcX, bc: k.bc, pool: k.pool || null, words: k.words, links: k.links || null,
       audit: k.audit, rc: k.rc, holders: k.holders, soc: k.soc, org: k.org, s5: k.s5, dev: k.dev, meme: k.meme, score: k.score,
-      status: k.status, ok: k.ok, why: k.why };
+      status: k.status, ok: k.ok, why: k.why, samp: passed(k) ? 'passed' : `1/${KEEP_EVERY}` };
   }
+  function cap() { while (Q.length > MAX_Q) { let o = 0; for (let i = 1; i < Q.length; i++) if (Q[i].due < Q[o].due) o = i; Q.splice(o, 1); dropped++; } }
   function add(k) {
     if (!k || !k.x || !core.okAddr(k.bc) || Q.some(q => q.k.m === k.m)) return;
+    if (!sampled(k)) { skipped++; return; }
     Q.push({ due: k.x + DUE_S, tries: 0, k: snap(k) });
+    cap();
   }
-  function load(a) { for (const q of (Array.isArray(a) ? a : [])) if (q && q.k && q.k.m && !Q.some(x => x.k.m === q.k.m)) Q.push(q); }
+  function load(a) {
+    for (const q of (Array.isArray(a) ? a : [])) if (q && q.k && q.k.m && !Q.some(x => x.k.m === q.k.m)) {
+      if (!sampled(q.k)) { skipped++; continue; }
+      if (!q.k.samp) q.k.samp = passed(q.k) ? 'passed' : `1/${KEEP_EVERY}`;
+      Q.push(q);
+    }
+    cap();
+  }
   // called by the candle loop when the bots need nothing from GeckoTerminal; true if it used the slot
   async function idle() {
     const t = nowS();
@@ -68,7 +86,7 @@ function create({ core, E, clock, log, put, run }) {
       lastErr = 'upload: ' + String(e && e.message || e).slice(0, 70); log('research upload failed: ' + (e && e.message || e));
     } finally { flushing = false; }
   }
-  const stats = () => ({ queued: Q.length, due: Q.filter(q => q.due <= nowS()).length, done, failed, files, buffered: buf.length, lastFlush, lastErr });
+  const stats = () => ({ queued: Q.length, due: Q.filter(q => q.due <= nowS()).length, done, failed, files, buffered: buf.length, lastFlush, lastErr, skipped, dropped });
   return { add, load, out: () => Q, queued: () => Q.length, idle, maybeFlush, stats };
 }
-module.exports = { create, DUE_S };
+module.exports = { create, DUE_S, sampled, fnv, KEEP_EVERY };

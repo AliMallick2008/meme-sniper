@@ -77,6 +77,23 @@ def main():
         print("replay:", bid, rp)
         R.shot(paths.out("server_replay.png"), full=False, sel=".sn-chartcard")
         ok = ok and rp is not None
+    # the v11 tab: the honest engine's accounts, trade audit and dossier, from the same state.json
+    v11 = st.get("v11")
+    if v11:
+        R.pg.click("#t-v11"); R.advance(3, step=1)
+        rows = R.pg.evaluate("document.querySelectorAll('#v11Accts tbody tr').length")
+        pill = R.pg.inner_text("#v11Pill")
+        print(f"v11 tab: {rows} account rows (state has {len(v11['accts'])}), status '{pill}'")
+        ok = ok and rows == len(v11["accts"]) and pill in ("Forward paper", "Incomplete data")
+        if R.pg.query_selector("#v11Trades tbody tr"):
+            R.pg.click("#v11Trades tbody tr"); R.advance(1, step=1)
+            det = R.pg.inner_text("#v11TradeDetail")
+            R.pg.click("#v11TradeDetail [data-dossier]"); R.advance(1, step=1)
+            dos = R.pg.inner_text("#v11Dossier")
+            print("   trade detail:", det.split("\n")[0][:100], "| dossier:", "Evidence incomplete" in dos)
+            ok = ok and "Decided" in det and "Evidence incomplete" in dos
+        R.shot(paths.out("server_v11.png"), full=True)
+        R.pg.click("#t-sniper"); R.advance(2, step=1)
     R.advance(3600, step=10)
     api = [g for g in R.gh if g[1] == "api.github.com"]
     span = (R.gh[-1][0] - R.gh[0][0]) / 3600 if len(R.gh) > 1 else 1
@@ -92,6 +109,11 @@ def main():
     R.shot(paths.out("server_phone_dark.png"), full=True)
     w = R.pg.evaluate("document.documentElement.scrollWidth")
     print("phone page width:", w)
+    ok = ok and w <= 392
+    R.pg.click("#t-v11"); R.advance(3, step=1)
+    R.shot(paths.out("server_v11_phone_dark.png"), full=True)
+    w = R.pg.evaluate("document.documentElement.scrollWidth")
+    print("phone v11 tab width:", w)
     ok = ok and w <= 392
     R.stop()
     # 3) the server appears while this browser runs the bots itself: it takes over

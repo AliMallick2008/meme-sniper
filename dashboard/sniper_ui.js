@@ -101,6 +101,8 @@ const SNIPER_UI = (() => {
   // state.json comes from GitHub's API (fresh; 60 calls an hour per IP without a login) or, past that limit, from GitHub's
   // CDN copy (up to 5 minutes old). Trade candles for old trades come from tc/<coin>.json next to it.
   const SRV = { srv: null, at: 0, via: '', apiOffUntil: 0, lastEvT: 0, next: 0, fails: 0 };
+  const srvListeners = [];   // other views of the same state.json (the v11 tab), so it is fetched once
+  function onServer(fn) { srvListeners.push(fn); if (SRV.full) { try { fn(SRV.full); } catch (e) { /* that view's problem */ } } }
   function tfetch(url, opt) {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, to = setTimeout(() => ctl && ctl.abort(), 15000);
     return fetch(url, Object.assign(ctl ? { signal: ctl.signal } : {}, opt || {})).finally(() => clearTimeout(to));
@@ -124,7 +126,8 @@ const SNIPER_UI = (() => {
     if (SRV.srv && s.srv.t < SRV.srv.t) return;   // never step back to an older copy (the CDN can lag the API)
     const j = s.J; j.tc = {};
     useJ(j);
-    SRV.srv = s.srv; SRV.at = Date.now(); SRV.via = via;
+    SRV.srv = s.srv; SRV.at = Date.now(); SRV.via = via; SRV.full = s;
+    for (const fn of srvListeners) { try { fn(s); } catch (e) { /* that view's problem */ } }
     const last = J.ev.length ? J.ev[J.ev.length - 1][0] : 0;
     if (!quiet && SRV.lastEvT) for (const e of J.ev) if (e[0] > SRV.lastEvT && e[1] && /^(buy|win|loss)$/.test(e[2])) toast(BOT(e[1]), e[2], BOT(e[1]).name, String(e[3]).replace(/^[^:]*:\s*/, ''), e[4]);
     SRV.lastEvT = Math.max(SRV.lastEvT, last);
@@ -688,5 +691,5 @@ const SNIPER_UI = (() => {
     for (const b of BOTS) { const B = J.bots[b.id]; out[b.id] = { pos: B.pos ? [B.pos.sym, nearExit(b, B)] : null, watch: B.watch.filter(w => !w.done).map(w => [(J.coins[w.m] || {}).sym, nearBuy(w, b), !!w.wait, w.trig, (M.px.get(w.m) || {}).price, (M.cs.get(w.m) || {}).fin, liveSince(w.m, (M.cs.get(w.m) || {}).fin || 0)]) }; }
     return out;
   }
-  return { start, onShow, render, _J: () => J, _M: M, _lanes: () => LANES, _step: stepAll, _leader: () => leader, _near, _mode: () => mode, _srv: () => SRV, _core: C, BOTS };
+  return { start, onShow, render, onServer, _J: () => J, _M: M, _lanes: () => LANES, _step: stepAll, _leader: () => leader, _near, _mode: () => mode, _srv: () => SRV, _core: C, BOTS };
 })();

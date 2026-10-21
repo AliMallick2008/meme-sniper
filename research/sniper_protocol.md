@@ -85,3 +85,17 @@ live too, so both can be compared forward.
 - The research runs on the server-recorded coins only (Amendment 3, from Oct 21 4:19 AM ET on): the first 60% of crossings
   by time choose any rule change (same tests and grid as above), the last 40% judge it, once at least 1,000 crossings with
   final candles are recorded. Nothing in the live bots changes because of this.
+
+## Amendment 5 (Wed Oct 21 2026, 11:50 AM ET, no outcome analysis done)
+- GeckoTerminal (the only source of final 1-minute candles) leaves room for about 9 research coins an hour beside the
+  live bots' own candle needs, while about 80 coins an hour cross $7K. By 11:10 AM ET the queue held 812 coins and 52
+  records had been written; the queue (rq.json, 1 MB) would have kept growing for 3 days.
+- From v10.2 the recorder keeps every coin that passed at least one bot's checks (`samp: "passed"`), plus 1 in 24 of the
+  other crossings, chosen by a hash of the mint (FNV-1a of the address, mod 24 = 0; `samp: "1/24"`), which cannot depend
+  on how the coin did. Coins already queued were filtered the same way. The queue is capped at 300 coins (the oldest is
+  dropped and counted in `dropped`). The 52 records written before this have no `samp` field and are kept as they are.
+- Rules that trade only coins passing the bots' checks are evaluated on the "passed" stratum, which stays complete.
+  Statements about all crossings use the 1/24 stratum. The 1,000-crossing threshold of Amendment 4 counts both strata.
+- Separately, from v11 (Oct 21 2026) every input of the v11 engine is recorded (`v11-inputs/`, see
+  `research/v2_protocol.md`): prices every 5 s for every crossed coin's first 20 minutes and every 30 s after that while
+  it is alive, Jupiter order flow every 20 s, quotes, checks. That stream covers every crossing, not a sample.

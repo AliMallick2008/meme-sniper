@@ -15,8 +15,9 @@ engine = rd(D, "engine.js") + "\n" + rd(D, "meme.js")
 ui = rd(D, "ui.js")
 research = json.dumps(json.load(open(os.path.join(D, "research.json"))), separators=(",", ":"))
 lwc = rd(D, "vendor", "lightweight-charts.standalone.production.js")
-sniper = (rd(SERVER, "sniper.js") + "\n" + rd(SERVER, "sniper_core.js") + "\n" + rd(D, "sniper_ui.js") +
-          "\nSNIPER_UI.start();\nif (!document.getElementById('p-sniper').hidden) SNIPER_UI.onShow();\n")
+sniper = (rd(SERVER, "sniper.js") + "\n" + rd(SERVER, "sniper_core.js") + "\n" + rd(D, "sniper_ui.js") + "\n" + rd(D, "v11_ui.js") +
+          "\nSNIPER_UI.onServer(V11_UI.onServer);\nSNIPER_UI.start();\nif (!document.getElementById('p-sniper').hidden) SNIPER_UI.onShow();\n" +
+          "if (!document.getElementById('p-v11').hidden) V11_UI.onShow();\n")
 
 out = (page.replace("/*__CSS__*/", css).replace("/*__LWC__*/", lwc).replace("/*__ENGINE__*/", engine)
        .replace("/*__RESEARCH__*/", research).replace("/*__UI__*/", ui).replace("/*__SNIPER__*/", sniper))
