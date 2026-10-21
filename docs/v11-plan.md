@@ -57,7 +57,8 @@ runtime. Every event carries `at` = when the runtime received it. Persisted stat
 ## Accounts (all start with 10 paper SOL at the v11 start)
 
 - `E0-*` (7): the legacy rule sets with causal timing (audit experiment E0): same gates as legacy (including legacy's
-  unknown-as-pass), same 40% (55%) dip from the observed high, green-bar entry for GRN, same targets/stops/time limits,
+  unknown-as-pass), the same watchlist as the legacy bot (6 slots and swaps, from the legacy core's own decision; rev 2),
+  same 40% (55%) dip from the observed high, green-bar entry for GRN, same targets/stops/time limits,
   but eligibility from `eligible_at`, signals from live observations only, fills at the next quote. Measures how much of
   the legacy P&L survives honest timing. Stops below the curve floor are kept (legacy rule) and flagged.
 - `A` Launch Momentum, `B` Confirmed Pullback Recovery, `C` Post-Graduation Momentum (Phase 3): strict 4-valued gates,

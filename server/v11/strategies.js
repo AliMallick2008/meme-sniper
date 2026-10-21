@@ -11,9 +11,12 @@ const { WATCH_S, BOTS, START_SOL } = E.RULES;
 
 const FRESH_MS = 20000;   // a price older than this is not used for a decision
 
+// rev 2 (Oct 21 2026): E0 watches exactly what its legacy bot watches (the 6-slot watchlist included), instead of every
+// coin passing the legacy checks
 function accounts() {
-  const out = BOTS.map(b => ({ id: 'E0-' + b.id, exp: 'v11-e0/' + b.id, kind: 'e0', legacy: b.id, name: 'E0 ' + b.name, P: b.P, C: b.C, stake: b.P.stake,
-    desc: `Legacy "${b.name}" rules with honest timing: watch starts when its checks finish, buys and sells only on prices seen live, filled at the next quote.` }));
+  const out = BOTS.map(b => ({ id: 'E0-' + b.id, exp: 'v11-e0/' + b.id, kind: 'e0', legacy: b.id, rev: 2, revWhy: 'E0 now follows the legacy watchlist, 6-slot limit included',
+    name: 'E0 ' + b.name, P: b.P, C: b.C, stake: b.P.stake,
+    desc: `Legacy "${b.name}" rules with honest timing: watches what the legacy bot watches from when its checks finish, buys and sells only on prices seen live, filled at the next quote.` }));
   out.push({ id: 'HOLD', exp: 'v11-hold', kind: 'hold', name: 'Hold SOL', desc: 'Never trades: the 10 SOL baseline every strategy has to beat.' });
   return out;
 }
@@ -22,10 +25,14 @@ function accounts() {
 // admit a coin to an E0 watchlist once both legacy checks are in: the watch starts at eligible_at, never earlier
 function e0Admit(A, c, crosses) {
   if (!c.audit || !c.rc || A.watch[c.m] || A.seen[c.m]) return null;
+  if (!c.legacyWatch) return null;                       // wait for the legacy bots' decision on this coin
   const gates = G.legacy(c, A.C, crosses);
-  const eligibleAt = Math.max(c.xAt, c.audit.at, c.rc.at);
-  A.seen[c.m] = { at: eligibleAt, pass: G.allPass(gates), why: G.fails(gates).map(x => x.label) };
-  if (!G.allPass(gates)) return { m: c.m, at: eligibleAt, pass: false, gates };
+  const eligibleAt = Math.max(c.xAt, c.audit.at, c.rc.at, c.legacyWatch.at);
+  const watched = c.legacyWatch.bots.includes(A.legacy);
+  if (G.allPass(gates) && !watched) gates.push({ id: 'slot', label: 'A free watch slot (legacy: 6 coins, the weakest far from its buy zone can be swapped)', status: G.F, value: 'watchlist full', at: c.legacyWatch.at });
+  const pass = G.allPass(gates) && watched;
+  A.seen[c.m] = { at: eligibleAt, pass, why: G.fails(gates).map(x => x.label) };
+  if (!pass) return { m: c.m, at: eligibleAt, pass: false, gates };
   A.watch[c.m] = { m: c.m, from: eligibleAt, to: eligibleAt + WATCH_S * 1000, armed: null, dipAt: null, done: null, failUntil: 0 };
   return { m: c.m, at: eligibleAt, pass: true, gates };
 }

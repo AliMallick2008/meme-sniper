@@ -91,7 +91,16 @@ function createRuntime({ core, clock, log, store, run, sha }) {
   let events = [], evH = 0, part = 0, inH = Math.floor(now() / 3600e3), inStart = now(), inPart = 0, lastSol = null, started = false, urgentFlag = false, saveN = 0;
   const stats = { dex: 0, jup: 0, quotes: 0, quoteFails: 0, invalid: 0, flushed: 0, inLines: 0, inBytes: 0, fast: 0, slow: 0 };
 
+  // swaps the legacy bots made (watch entries marked drop), so each legacy decision reports only its own swaps
+  const seenDrops = new Set();
+  const dropKey = (bot, w) => `${bot}|${w.m}|${w.from}`;
+  function legacyDrops() {
+    const out = [], J = core.J();
+    for (const [bot, B] of Object.entries(J.bots || {})) for (const w of B.watch || []) if (w.drop && !seenDrops.has(dropKey(bot, w))) { seenDrops.add(dropKey(bot, w)); out.push([bot, w.m]); }
+    return out;
+  }
   function load(saved) {
+    legacyDrops();                                         // swaps from before this run are already in the saved state
     rec.version(now(), { sha: sha || null, engine: eng.VERSION, run });
     rec.load(now(), saved && saved.v && saved.accts ? saved : null);
     if (saved && saved.v && saved.accts) { eng.load(REC.unpack(saved)); log(`v11: resumed (started ${new Date(saved.startedAt).toISOString()})`); }
@@ -103,6 +112,11 @@ function createRuntime({ core, clock, log, store, run, sha }) {
 
   // -------------------------------------------------------------------------------------------- legacy-core hooks
   const hooks = {
+    // the legacy bots decided which of them watch this coin (checks + 6-slot watchlists); E0 follows that decision
+    onDecide(k) {
+      if (!started) return;
+      ingest({ id: 'lw:' + k.m, type: 'legacy_watch', at: now(), m: k.m, bots: Object.keys(k.ok || {}).filter(id => k.ok[id]), dropped: legacyDrops() });
+    },
     onCross(k, c, tSec) {
       if (!started) return;
       ingest({ id: 'x:' + k.m, type: 'crossing', at: Math.round(tSec * 1000), m: k.m, sym: k.sym, name: k.name, t0: k.t, mcX: k.mcX, hiMc: c && c.max, bc: k.bc, links: k.links || null });

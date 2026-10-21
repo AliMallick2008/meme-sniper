@@ -136,6 +136,8 @@ test('T15: the same event twice and a restart -> one order, one fill, no duplica
   e.ingest({ id: 'x1', type: 'crossing', at: T0, m: M, sym: 'FROGT', name: 'Frog Test', hiMc: HI * 1e9, bc: BC });   // duplicate
   assert.strictEqual(e.state().crosses.filter(x => x[1] === M).length, 1);
   e.ingest({ id: 'a1', type: 'audit', at: min(5), m: M, valid: true, fields: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true } });
+  e.ingest({ id: 'lw1', type: 'legacy_watch', at: min(5), m: M, bots: ['U', 'U2', 'U30', 'T25', 'D55', 'GRN', 'STR'], dropped: [] });
+  e.ingest({ id: 'lw1', type: 'legacy_watch', at: min(5), m: M, bots: ['U', 'U2', 'U30', 'T25', 'D55', 'GRN', 'STR'], dropped: [] });   // duplicate
   e.ingest({ id: 'r1', type: 'rugcheck', at: min(5), m: M, valid: true, risks: [] });
   let reqs = [];
   for (let t = min(5); t <= min(7); t += 5000) { e.ingest({ id: 's' + t, type: 'snapshot', m: M, at: t, src: 'dex', valid: true, p: price(t), ps: price(t) / SOL_USD, venue: 'curve' }); reqs = reqs.concat(e.tick(t).filter(r => r.side === 'buy')); }
@@ -159,6 +161,7 @@ test('T20 (engine side): a snapshot that failed validation blocks entries on tha
   e.ingest({ id: 'x2', type: 'crossing', at: min(-0.5), m: M2, sym: 'FROGO', name: 'Frog Other' });
   e.ingest({ id: 'x1', type: 'crossing', at: T0, m: M, sym: 'FROGT', name: 'Frog Test', hiMc: HI * 1e9, bc: BC });
   e.ingest({ id: 'a1', type: 'audit', at: min(1), m: M, valid: true, fields: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true } });
+  e.ingest({ id: 'lw1', type: 'legacy_watch', at: min(1), m: M, bots: ['U', 'U2', 'U30', 'T25', 'D55', 'GRN', 'STR'], dropped: [] });
   e.ingest({ id: 'r1', type: 'rugcheck', at: min(1), m: M, valid: true, risks: [] });
   e.ingest({ id: 's1', type: 'snapshot', m: M, at: min(2), src: 'dex', valid: true, p: 0.8e-5, ps: 0.8e-7, venue: 'curve' });
   e.tick(min(2));

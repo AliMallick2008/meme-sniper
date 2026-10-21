@@ -120,3 +120,26 @@ test('T20: schema changes or missing fields fail safe with a logged reason', () 
   assert.ok(buys.length && buys.every(o => o.status === 'failed' && /validation/.test(o.reason)));
   assert.ok(!S.accts['E0-U'].pos);
 });
+
+test('E0 follows the legacy watchlist: a coin the legacy bot skipped (full slots) or swapped out is not bought', () => {
+  // the 40% dip comes at 12:06:30; the legacy decision says only U2 and STR watch the coin, and at 12:06:00 U2 swaps it out
+  const price = t => t < min(6.5) ? 0.8e-5 : 0.56e-5;
+  const drop = { id: 'lw-other', type: 'legacy_watch', at: min(6), m: 'OtherCoinpump', bots: ['U2'], dropped: [['U2', M]] };
+  const { S } = harness({ price, stopAt: min(8), legacyBots: ['U2', 'STR'], extraEvents: [drop] });
+  assert.ok(!S.accts['E0-U'].pos && ordersOf(S, 'E0-U', 'buy').length === 0, 'E0-U: its legacy bot never watched it (watchlist full)');
+  const seen = S.accts['E0-U'].seen[M];
+  assert.ok(seen && !seen.pass && seen.why.some(w => /free watch slot/.test(w)), 'logged as a full watchlist');
+  assert.strictEqual(ordersOf(S, 'E0-U2', 'buy').length, 0, 'E0-U2: swapped out before the dip, so no buy');
+  assert.ok(S.log.some(e => e.type === 'WatchDropped' && e.acct === 'E0-U2'));
+  assert.ok(ordersOf(S, 'E0-STR', 'buy').length >= 1, 'E0-STR still watches it and buys the dip');
+});
+
+test('per-account revision: only the revised accounts restart, the others keep their ledgers', () => {
+  const e0 = createEngine(); e0.init(T0); const S0 = e0.state();
+  S0.accts['E0-U'].rev = 1; S0.accts['E0-U'].cash = 9; S0.accts['A'].cash = 9.5;
+  const e = createEngine(); e.load(JSON.parse(JSON.stringify(S0)));
+  const S = e.state();
+  assert.strictEqual(S.accts['E0-U'].cash, 10, 'E0 (rev 2 now) restarted');
+  assert.strictEqual(S.accts['A'].cash, 9.5, 'V2 kept its ledger');
+  assert.ok(S.archive.some(x => x.acct === 'E0-U' && x.engine === 'rev 1'));
+});

@@ -15,7 +15,7 @@ const HI = 1e-5;                                      // $10K market cap high si
 const TRIG = 0.6 * HI;                                // 40% dip level
 
 // a market described as price at time; the harness observes it every 5 s, ticks every 5 s and answers quotes 1 s later
-function harness({ price, checksAt = min(5), quoteDelay = 1000, quote = null, stopAt = Infinity, extraEvents = [], setup = null, venue = () => 'curve' }) {
+function harness({ price, checksAt = min(5), quoteDelay = 1000, quote = null, stopAt = Infinity, extraEvents = [], setup = null, venue = () => 'curve', legacyBots = null }) {
   const e = createEngine();
   e.init(min(-20));
   e.ingest({ type: 'run_start', at: min(-20), run: 'test' });
@@ -31,6 +31,7 @@ function harness({ price, checksAt = min(5), quoteDelay = 1000, quote = null, st
     if (!checked && t >= checksAt) {
       checked = true;
       e.ingest({ id: 'a1', type: 'audit', at: checksAt, reqAt: T0 + 1000, m: M, valid: true, fields: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, devBalancePercentage: 1, topHoldersPercentage: 10, holders: 120, socials: { tw: true }, devMints: 1 } });
+      e.ingest({ id: 'lw1', type: 'legacy_watch', at: checksAt, m: M, bots: legacyBots || ['U', 'U2', 'U30', 'T25', 'D55', 'GRN', 'STR'], dropped: [] });
       e.ingest({ id: 'r1', type: 'rugcheck', at: checksAt, reqAt: T0 + 2000, m: M, valid: true, risks: [], sn: 1 });
     }
     for (const q of pending.filter(q => q.at <= t)) { pending.splice(pending.indexOf(q), 1); e.ingest(q.ev); log.quotes.push(q.ev); }

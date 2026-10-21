@@ -21,7 +21,7 @@ async function runServer(o) {
     save: force => { dirty = true; if (force) urgent = true; },
     dirty: () => { dirty = true; },
     gapText: a => `The bot server was offline for ${a}. Coins the bots held or watched are caught up from their 1-minute candles; launches in that time were not scanned.`,
-    onDecide: k => { if (research) research.add(k); },
+    onDecide: k => { if (research) research.add(k); if (v11) v11.hooks.onDecide(k); },
     gtIdle: () => research ? research.idle() : Promise.resolve(false),
     // the v11 engine (beside the legacy bots) hears about crossings and checks the moment they arrive
     onCross: (k, c, t) => { if (v11) v11.hooks.onCross(k, c, t); },

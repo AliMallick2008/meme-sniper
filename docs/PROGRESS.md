@@ -50,3 +50,8 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   snapshots trimmed to used fields (recording was 2.3 MB/h gzipped), state.json view slimmed (was 1.2 MB). The GeckoTerminal
   research recorder got no slots at all after 13:00 UTC (bots' candle queue never empty); the v11 recording now covers every
   crossing, so the legacy research will move to it (protocol amendment pending).
+- Oct 21 ~5:30 PM ET: E0 rev 2. E0 had watched every coin passing the legacy checks, but the legacy bots keep at most 6
+  coins each (a stronger coin replaces the weakest one far from its buy zone), so E0 traded far more coins than its bot
+  (E0-U2 15 trades vs U2 4 under 11.0). Now the legacy core reports each watchlist decision (`legacy_watch` event from
+  `decide()`: which bots watch the coin, which coins were swapped out) and E0 follows it with honest timing. Accounts got
+  revisions: only E0 restarts (archived as "rev 1"), V2 keeps its ledger.

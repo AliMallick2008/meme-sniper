@@ -15,6 +15,7 @@ claims an edge before the evidence rules in `research/v2_protocol.md` are met.
 | 4 | Narrative layer without fabricated evidence: social "unavailable", launcher links "unverified claim", name-cluster score labeled as copycats, dossier | `narrative.js`, v11 tab |
 | 5 | Recording of every engine input with exact replay, ablation and baseline tool, v11 tab, this report | `record.js`, `server/tools/`, `dashboard/v11_ui.js` |
 | 11.1 | Jupiter-first prices with data times after measuring DexScreener's lag; 11.0 accounts archived, all restarted | `market.js`, `engine.js` |
+| E0 rev 2 | E0 follows the legacy bots' own watchlists (6 slots, swaps) via a `legacy_watch` event; only E0 restarted | `strategies.js`, `runtime.js` |
 
 Acceptance tests T01-T20: `node --test server/tests/*.test.js` (T01 T02 T03 T10 T11 T12 T14 T15 in phase 1, T04 T07 T13
 T17 T18 T20 in phase 2, T05 T06 T16 in phase 3, T08 T09 T19 in phase 4), plus the recording replay test. The server sim

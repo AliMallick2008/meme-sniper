@@ -30,6 +30,7 @@ function liveRun() {
     for (let t = from; t <= to; t += 1000) {
       if (t === min(5)) {
         ingest({ id: 'a1', type: 'audit', at: t, reqAt: T0 + 1000, m: M, valid: true, fields: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, devBalancePercentage: 1, topHoldersPercentage: 10, holders: 120, socials: { tw: true }, devMints: 1 } });
+        ingest({ id: 'lw1', type: 'legacy_watch', at: t, m: M, bots: ['U', 'U2', 'U30', 'T25', 'D55', 'GRN', 'STR'], dropped: [] });
         ingest({ id: 'r1', type: 'rugcheck', at: t, reqAt: T0 + 2000, m: M, valid: true, risks: [], sn: 1 });
       }
       for (const q of pending.filter(q => q.at <= t)) { pending.splice(pending.indexOf(q), 1); ingest(q.ev); }

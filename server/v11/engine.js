@@ -22,7 +22,7 @@ const MAX_SLIP = { buy: 0.10, sell: 0.60 };   // worst accepted quote vs the dec
 const DEC = 6;                   // pump.fun token decimals
 const KEEP_COIN_MS = 3 * 3600e3; // coins nobody holds or watches are dropped after this
 const EQ_EVERY = 120000;         // equity point spacing
-const DEDUP = new Set(['crossing', 'audit', 'rugcheck', 'quote', 'rcreport']);
+const DEDUP = new Set(['crossing', 'audit', 'rugcheck', 'quote', 'rcreport', 'legacy_watch']);
 const MARK_Q_CURVE = 60000, MARK_Q_POOL = 30000;   // executable sell quote for each held coin this often
 const ROUTE_LOST_AFTER = 2;                       // consecutive failed sell quotes before a coin counts as unsellable
 const DROP_UNWATCHED_MS = 20 * 60000;   // a crossed coin no account watches or holds is forgotten after this (unless alive)
@@ -50,21 +50,29 @@ function createEngine(opts = {}) {
   function load(s) {
     S = s; S.outbox = [];
     if (S.v !== VERSION) upgrade(S.v);
-    for (const a of accountDefs()) if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt);
+    // an account whose rules changed revision (e.g. E0 rev 2: the legacy bots' own watchlists) is archived and restarts alone
+    for (const a of accountDefs()) {
+      const A = S.accts[a.id];
+      if (A && (A.rev || 1) !== (a.rev || 1)) { archiveAcct(A, S.lastAt, `rev ${A.rev || 1}`); delete S.accts[a.id];
+        log('AccountRestarted', S.lastAt, { acct: a.id, from: A.rev || 1, to: a.rev || 1, why: a.revWhy || 'rules revised' }); }
+      if (!S.accts[a.id]) S.accts[a.id] = newAccount(a, S.lastAt);
+    }
     return S;
+  }
+  function archiveAcct(A, at, engine) {
+    const eq = equityValue(A);
+    S.archive = S.archive || [];
+    S.archive.push({ engine, acct: A.id, name: A.name, from: A.startedAt || S.startedAt, to: at, value: eq.known ? +eq.v.toFixed(6) : null, lo: +eq.lo.toFixed(6),
+      cash: +A.cash.toFixed(6), trades: A.trades.length, wins: A.trades.filter(t => t.net > 0).length, net: +A.trades.reduce((x, t) => x + t.net, 0).toFixed(6),
+      open: A.pos ? { m: A.pos.m, sym: A.pos.sym, cost: A.pos.cost, mark: A.pos.mark ? A.pos.mark.value : null } : null });
+    for (const o of Object.values(S.orders)) if (o.status === 'requested' && o.acct === A.id) { o.status = 'cancelled'; o.reason = 'account restarted'; o.doneAt = at; }
   }
   /* A saved state from an older engine: under 11.0 a lagging DexScreener price could overwrite a fresh Jupiter price,
      so its results are not comparable with 11.1's. Every account is archived with its last mark and starts again with
      10 paper SOL; orders in flight are cancelled. Coins, checks and coverage history are kept. */
   function upgrade(from) {
     const at = S.lastAt;
-    S.archive = S.archive || [];
-    for (const A of Object.values(S.accts)) {
-      const eq = equityValue(A);
-      S.archive.push({ engine: from, acct: A.id, name: A.name, from: A.startedAt || S.startedAt, to: at, value: eq.known ? +eq.v.toFixed(6) : null, lo: +eq.lo.toFixed(6),
-        cash: +A.cash.toFixed(6), trades: A.trades.length, wins: A.trades.filter(t => t.net > 0).length, net: +A.trades.reduce((x, t) => x + t.net, 0).toFixed(6),
-        open: A.pos ? { m: A.pos.m, sym: A.pos.sym, cost: A.pos.cost, mark: A.pos.mark ? A.pos.mark.value : null } : null });
-    }
+    for (const A of Object.values(S.accts)) archiveAcct(A, at, from);
     for (const o of Object.values(S.orders)) if (o.status === 'requested') { o.status = 'cancelled'; o.reason = 'engine upgrade'; o.doneAt = at; }
     S.accts = {};
     log('EngineUpgraded', at, { from, to: VERSION, why: 'prices now come from Jupiter first (DexScreener lags about 46 s on these coins); every account restarts, earlier results are archived' });
@@ -90,6 +98,7 @@ function createEngine(opts = {}) {
       case 'audit': return audit(ev);
       case 'rugcheck': return rugcheck(ev);
       case 'rcreport': return rcreport(ev);
+      case 'legacy_watch': return legacyWatch(ev);
       case 'snapshot': return snapshot(ev);
       case 'sol': S.sol.push({ at: ev.at, usd: ev.usd }); if (S.sol.length > 600) S.sol.splice(0, S.sol.length - 600); return [];
       case 'quote': return quote(ev);
@@ -143,6 +152,19 @@ function createEngine(opts = {}) {
     if (r.valid || !c.rcr) c.rcr = r;
     c.rcrTries = (c.rcrTries || 0) + 1;
     log('RugCheckReportReceived', ev.at, { m: ev.m, reqAt: ev.reqAt, valid: r.valid, devPct: r.devPct, how: r.devHow, reason: r.reason });
+    return [];
+  }
+  /* the legacy bots' own watchlist decision for a coin (sniper_core decide(): checks, plus the 6-slot limit where a
+     stronger coin replaces the weakest one far from its buy zone). E0 follows it: an E0 account watches only what its
+     legacy bot watches, and stops watching a coin the legacy bot swapped out, from the moment it happened. */
+  function legacyWatch(ev) {
+    const c = S.coins[ev.m];
+    if (c) c.legacyWatch = { at: ev.at, bots: ev.bots || [] };
+    for (const [bot, m] of ev.dropped || []) {
+      const A = S.accts['E0-' + bot], w = A && A.watch[m];
+      if (w && !w.done && ev.at < w.to) { w.to = Math.max(w.from, ev.at); w.dropped = ev.at; log('WatchDropped', ev.at, { acct: A.id, m, why: `the legacy bot swapped it out for ${(c && c.sym) || ev.m}` }); }
+    }
+    if (c) admit(c);
     return [];
   }
   // a coin becomes eligible for an account only once every input its gates need has been received
