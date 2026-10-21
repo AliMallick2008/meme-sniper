@@ -41,17 +41,21 @@ function variants() {
   return out;
 }
 
-function run(dir, { from = 0, to = Infinity, latency = 1000, accounts = variants } = {}) {
+/* fillMaxAge: a model fill uses the last price observed at most this long before it. The live run polls the coins it
+   holds every 12 s, but a replayed variant may hold a coin the live run followed only every 30 s (slow list) or every
+   2 minutes (coins it had dropped): fills on prices older than 30 s are counted per account as "stale fills". */
+function run(dir, { from = 0, to = Infinity, latency = 1000, accounts = variants, fillMaxAge = 150000 } = {}) {
   const list = files(require('path').join(dir, 'v11-inputs'));
   const eng = createEngine({ accounts });
-  let started = false, last = 0, n = { events: 0, ticks: 0, quotes: 0, noPrice: 0 };
+  let started = false, last = 0, n = { events: 0, ticks: 0, quotes: 0, noPrice: 0, staleFills: {} };
   const pending = [];
   const answer = (upTo) => {
     pending.sort((a, b) => a.at - b.at);
     while (pending.length && pending[0].at <= upTo) {
       const q = pending.shift(), c = eng.state().coins[q.r.m];
-      const p = c && MK.fresh(c, q.at, 30000);
+      const p = c && MK.fresh(c, q.at, fillMaxAge);
       n.quotes++;
+      if (p && q.at - p.at > 30000 && q.r.orderId) { const acct = q.r.orderId.split(':')[0]; n.staleFills[acct] = (n.staleFills[acct] || 0) + 1; }
       if (!p || !(p.ps > 0)) { n.noPrice++; eng.ingest({ id: `mq:${q.r.orderId || q.r.m}:${q.at}`, type: 'quote', at: q.at, orderId: q.r.orderId, m: q.r.m, side: q.r.side, inAmount: q.r.amount, ok: false, err: 'no fresh price for a model fill', transport: true, valid: true }); continue; }
       const venue = c.stage === 'pool' ? 'pool' : 'curve';
       const o = q.r.side === 'buy' ? X.buyOut(q.r.amount / 1e9, p.ps, venue, q.at) : X.sellOut(q.r.amount / 1e6, p.ps, venue, q.at);
@@ -130,10 +134,10 @@ function print(rows, title) {
 if (require.main === module) {
   const dir = process.argv[2];
   const from = arg('from') ? Date.parse(arg('from')) : 0, to = arg('to') ? Date.parse(arg('to')) : Infinity;
-  const latency = +arg('latency', 1000);
+  const latency = +arg('latency', 1000), fillMaxAge = +arg('fill-max-age', 150000);
   if (arg('drift')) FEES.COSTS.landingDrift = +arg('drift');
   const t0 = Date.now();
-  const { eng, n, last } = run(dir, { from, to, latency });
+  const { eng, n, last } = run(dir, { from, to, latency, fillMaxAge });
   const S = eng.state();
   console.log(`replayed ${n.events} market events and ${n.ticks} ticks from ${new Date(S.startedAt).toISOString()} to ${new Date(last).toISOString()} in ${((Date.now() - t0) / 1000).toFixed(1)} s; ${n.quotes} model fills (${n.noPrice} without a fresh price), drift ${FEES.COSTS.landingDrift}, latency ${latency} ms`);
   const rows = report(eng);
@@ -143,6 +147,7 @@ if (require.main === module) {
   print(report(eng, t => t.decidedAt < cut), `choose (decided before ${new Date(cut).toISOString()})`);
   print(report(eng, t => t.decidedAt >= cut), 'judge (decided after)');
   for (const r of rows) if (r.funnel) console.log(`funnel ${r.id.padEnd(14)} ${JSON.stringify(r.funnel)}`);
+  console.log('fills on prices older than 30 s (coins the live run did not follow closely):', JSON.stringify(n.staleFills));
   if (arg('json')) fs.writeFileSync(arg('json'), JSON.stringify({ n, rows, cut }, null, 1));
 }
 module.exports = { run, report, variants, daily, bootstrap };

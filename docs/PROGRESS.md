@@ -55,3 +55,9 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   (E0-U2 15 trades vs U2 4 under 11.0). Now the legacy core reports each watchlist decision (`legacy_watch` event from
   `decide()`: which bots watch the coin, which coins were swapped out) and E0 follows it with honest timing. Accounts got
   revisions: only E0 restarts (archived as "rev 1"), V2 keeps its ledger.
+- Oct 21 ~4:35 PM ET: replay verified on real data across two run handovers (3939acf -> 6e7ea63 at 16:27 UTC and
+  6e7ea63 -> dcc1779 at 20:15 UTC: 399k events, 3.1k ticks, "loaded state matches the replay" both times). First ablation
+  run on the 4 recorded 11.0 hours with 11.1 logic and model fills worked, but showed a coverage gap: a replayed variant can
+  hold a coin the live run had stopped following (74% of its model fills found no recent price). The runtime now records
+  every crossed coin for 3 hours (coins the engine dropped every 2 minutes, recording only), and the ablation fills on the
+  last price up to 150 s old, counting fills on prices older than 30 s per account.

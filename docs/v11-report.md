@@ -52,7 +52,10 @@ within 6 s; the sale quotes came back near the buy price. Engine 11.1 builds pri
   while running. Replays rebuild the live state exactly (`server/tools/v11_replay.js`).
 - `v11-events/`: every engine decision (eligibility, orders, fills, failures, reviews, closes, coverage gaps).
 - Coverage: only time the server was running; launches during an outage are not seen at all (selection bias, audit
-  finding 20). Gaps are listed in the v11 tab and in `state.json > v11.gaps`.
+  finding 20). Gaps are listed in the v11 tab and in `state.json > v11.gaps`. Within that time, every crossed coin is
+  priced for 3 hours: held, ordering, watched, young and setup-candidate coins every 12 s (Jupiter) and 10 s (DexScreener),
+  other live coins every 30 s, coins under $5K or dropped every 2 minutes (from Oct 21, 4:45 PM ET).
+- Exact replay verified on real data across run handovers (Oct 21: 399k events, every reloaded state identical).
 
 ## 4. Execution cost model (per trade)
 

@@ -89,7 +89,7 @@ function createRuntime({ core, clock, log, store, run, sha }) {
   const eng = createEngine();
   const rec = REC.recorder();          // every engine input, in order: replayable exactly (record.js)
   let events = [], evH = 0, part = 0, inH = Math.floor(now() / 3600e3), inStart = now(), inPart = 0, lastSol = null, started = false, urgentFlag = false, saveN = 0;
-  const stats = { dex: 0, jup: 0, quotes: 0, quoteFails: 0, invalid: 0, flushed: 0, inLines: 0, inBytes: 0, fast: 0, slow: 0 };
+  const stats = { dex: 0, jup: 0, quotes: 0, quoteFails: 0, invalid: 0, flushed: 0, inLines: 0, inBytes: 0, fast: 0, slow: 0, dead: 0 };
 
   // swaps the legacy bots made (watch entries marked drop), so each legacy decision reports only its own swaps
   const seenDrops = new Set();
@@ -106,6 +106,7 @@ function createRuntime({ core, clock, log, store, run, sha }) {
     if (saved && saved.v && saved.accts) { eng.load(REC.unpack(saved)); log(`v11: resumed (started ${new Date(saved.startedAt).toISOString()})`); }
     else { eng.init(now()); log('v11: fresh start, every account 10 paper SOL'); }
     ingest({ type: 'run_start', at: now(), run });
+    for (const c of Object.values(eng.state().coins || {})) crossedAt.set(c.m, c.xAt);
     started = true;
   }
   const ingest = ev => { rec.event(ev); try { eng.ingest(ev); } catch (e) { core.note('v11 ingest: ' + (e.message || e)); } };
@@ -119,6 +120,7 @@ function createRuntime({ core, clock, log, store, run, sha }) {
     },
     onCross(k, c, tSec) {
       if (!started) return;
+      crossedAt.set(k.m, Math.round(tSec * 1000));
       ingest({ id: 'x:' + k.m, type: 'crossing', at: Math.round(tSec * 1000), m: k.m, sym: k.sym, name: k.name, t0: k.t, mcX: k.mcX, hiMc: c && c.max, bc: k.bc, links: k.links || null });
     },
     onAudit(k, reqAt, at, missing) {
@@ -134,9 +136,18 @@ function createRuntime({ core, clock, log, store, run, sha }) {
   };
 
   // -------------------------------------------------------------------------------------------- polling
-  // prices: the fast list every 5 s, the slow list every 30 s (engine.pollPlan decides which coin is where)
+  // every crossed coin for its first 3 hours, so the recording can price any position a replayed variant might hold
+  const crossedAt = new Map();
+  // prices: the fast list every 10 s, the slow list every 30 s (engine.pollPlan decides which coin is where); 'dead':
+  // crossed coins the engine no longer follows (under $5K, or forgotten), every 2 minutes, for the recording only
   async function pollDex(which) {
-    const plan = eng.pollPlan(now()), list = (which === 'slow' ? plan.slow : plan.fast).filter(core.okAddr);
+    const plan = eng.pollPlan(now());
+    let list;
+    if (which === 'dead') {
+      const at = now(), inPlan = new Set(plan.fast.concat(plan.slow));
+      for (const [m, x] of crossedAt) if (at - x > 3 * 3600e3) crossedAt.delete(m);
+      list = [...crossedAt.keys()].filter(m => !inPlan.has(m) && core.okAddr(m));
+    } else list = (which === 'slow' ? plan.slow : plan.fast).filter(core.okAddr);
     stats[which] = list.length;
     for (let i = 0; i < list.length; i += 30) {
       const batch = list.slice(i, i + 30);
@@ -263,6 +274,7 @@ function createRuntime({ core, clock, log, store, run, sha }) {
   function start(L) {
     L(() => pollDex('fast'), 10000, 'v11-dex');          // 11.1: DexScreener is the fallback price and the venue
     L(() => pollDex('slow'), 30000, 'v11-dex-slow');
+    L(() => pollDex('dead'), 120000, 'v11-dex-dead');
     L(pollJup, 12000, 'v11-jup');
     L(pollRcReports, 5000, 'v11-rcreport');
     L(async () => { tick(); }, 5000, 'v11-tick');
