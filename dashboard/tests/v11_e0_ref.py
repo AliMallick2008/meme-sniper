@@ -15,10 +15,14 @@ end, so a divergence there shows up as a mismatch instead of passing silently.
 
 Usage: python3 v11_e0_ref.py DIR [--live]   DIR holds v11-inputs/ and v11.json: the simulator output (dashboard/.out/srv_sim)
 or real data (`server/tools/fetch_research.sh DIR` plus v11.json from the data branch). --live: the data branch's v11.json
-is usually newer than the last uploaded input file, so the final state is compared only if it is not newer; every run
-start is still compared. Last line: ALL E0 MATCH or E0 DIFFERS."""
-import copy, glob, gzip, json, math, os, re, sys, time
+is usually newer than the last uploaded input file; when it is, the end of the recording is compared with the JS engine's
+own replay of the same inputs (server/v11/record.js replayExact, needs node) instead. Every run start is compared with
+what the server loaded. Last line: ALL E0 MATCH or E0 DIFFERS."""
+import copy, glob, gzip, json, math, os, re, subprocess, sys, time
 from decimal import Decimal, ROUND_HALF_UP
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 # ------------------------------------------------------------------------------------------------ JS value semantics
 class _Undef:
@@ -907,6 +911,7 @@ def e0_view(st):
         used |= {w['m'] for w in A['watch'].values() if not w.get('done')}
     return {'accts': accts, 'orders': {k: o for k, o in st['orders'].items() if o['acct'].startswith('E0-')},
             'halted': st.get('halted'), 'lastFeedAt': st.get('lastFeedAt'), 'lastAt': st.get('lastAt'),
+            'crosses': st.get('crosses'), 'seen': st.get('seen'),
             'gaps': [{'from': x['from'], 'to': x['to'], 'held': [h for h in x['held'] if h['acct'].startswith('E0-')]} for x in st.get('gaps', [])],
             'used': used, 'coins': st['coins']}
 
@@ -943,7 +948,7 @@ def compare(mine, live, limit=25):
     """Differences between this replay's committed state and a state the server saved, E0/HOLD part only."""
     x, y = e0_view(mine), e0_view(live)
     out = []
-    for k in ('accts', 'orders', 'halted', 'lastFeedAt', 'lastAt', 'gaps'):
+    for k in ('accts', 'orders', 'halted', 'lastFeedAt', 'lastAt', 'gaps', 'crosses', 'seen'):
         diff(x[k], y[k], k, out, limit)
     for m in sorted(x['used'] | y['used']):
         cx, cy = x['coins'].get(m), y['coins'].get(m)
@@ -972,6 +977,20 @@ def rules_check(st):
             if key not in d['C'] and truthy(A['C'][key]):
                 bad.append(f"{k}.C.{key}: saved {A['C'][key]!r}, not in the locked checks")
     return bad
+
+
+def js_last_save(files):
+    """The JS engine's last committed save after replaying the same inputs (record.js replayExact), and its run-start checks."""
+    code = ("const REC = require(process.argv[1]), fs = require('fs');"
+            "const r = REC.replayExact(process.argv.slice(2).map(f => fs.readFileSync(f)));"
+            "process.stdout.write(JSON.stringify({ save: r.lastSave, checks: r.checks.map(c => c.same) }));")
+    try:
+        p = subprocess.run(['node', '-e', code, os.path.join(REPO, 'server/v11/record.js')] + files, capture_output=True, text=True)
+    except OSError as e:
+        return {'save': None, 'err': repr(e)}
+    if p.returncode != 0:
+        return {'save': None, 'err': p.stderr[-400:]}
+    return json.loads(p.stdout)
 
 
 def short(v):
@@ -1013,6 +1032,9 @@ def check(DIR, live=False, log=print):
                     continue
                 if st:
                     problems += [('rules', b, '') for b in rules_check(st)]
+                if (committed is None) != (not st):
+                    problems.append((f"run start {loads}: " + ('the server loaded no v11 state although a save was committed' if committed is not None
+                                                               else 'the server loaded a state but no save was committed'), '', ''))
                 if committed is not None and st:
                     d = compare(unpack(copy.deepcopy(committed)), unpack(jsonrt(st)))
                     points += 1
@@ -1060,9 +1082,20 @@ def check(DIR, live=False, log=print):
     final = json.load(open(final_path))
     problems += [('rules', b, '') for b in rules_check(final)]
     if live and final['lastAt'] > committed['lastAt']:
-        # the server saves every 2 min but uploads its inputs once an hour: the data branch is ahead of the recording
-        log(f"   E0 ref: v11.json is {(final['lastAt'] - committed['lastAt']) / 60000:.0f} min newer than the recorded inputs: "
-            f"final state not compared (run starts are the checkpoints)")
+        # the server saves every 2 min but uploads its inputs once an hour: the data branch is ahead of the recording. The
+        # end of the recording is then compared with the JS engine's own replay of the same inputs (record.js replayExact,
+        # the code the server runs), whose run starts must in turn equal what the server loaded.
+        js = js_last_save(files)
+        log(f"   E0 ref: v11.json is {(final['lastAt'] - committed['lastAt']) / 60000:.0f} min newer than the recorded inputs: the end of the "
+            f"recording is compared with the JS engine's replay of the same inputs instead")
+        if js is None or js['save'] is None:
+            problems.append(('the JS replay of the inputs failed', js and js.get('err'), ''))
+        else:
+            if not all(js['checks']):
+                problems.append(('the JS replay itself differs from what the server loaded at a run start', js['checks'], ''))
+            d = compare(unpack(copy.deepcopy(committed)), unpack(jsonrt(js['save'])))
+            problems += [('end of the recording (JS replay): ' + p, a, b) for p, a, b in d]
+            points += 1
     else:
         d = compare(unpack(copy.deepcopy(committed)), unpack(jsonrt(final)))
         problems += [('final: ' + p, a, b) for p, a, b in d]

@@ -208,8 +208,8 @@ def v11_checks(DIR, o, J, sym):
 
 def e0_ref_checks(DIR):
     """The live E0 and HOLD accounts against their independent Python re-implementation (v11_e0_ref.py): on this run's
-    recorded inputs, then on a scripted market that walks the failure paths the simulator never reaches (failed and late
-    quotes, failed exits, lost routes, graduation, invalid data, halts, restarts with orders in flight, a failed save)."""
+    recorded inputs, then on a scripted market that adds the failure paths the simulator never reaches (failed and late
+    quotes, failed exits, lost routes, graduation, invalid data, restarts with orders in flight, a failed save)."""
     import v11_e0_ref as REF
     print("v11 E0 vs the independent Python re-implementation:")
     ok = REF.check(DIR)

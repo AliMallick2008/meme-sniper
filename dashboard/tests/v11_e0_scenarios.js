@@ -1,16 +1,19 @@
 'use strict';
-/* Scripted v11 inputs for the Python E0 re-check (v11_e0_ref.py): the paths the busy simulator never reaches.
+/* Scripted v11 inputs for the Python E0 re-check (v11_e0_ref.py), including the paths the busy simulator never reaches.
    A miniature runtime drives the live engine exactly as server/v11/runtime.js does (every input recorded first, ticks,
    saves, restarts from the last committed save) through a hand-made market of "Frog" coins:
      failed buys (no route, transport error, invalid answer, no answer at all, price moved, coin graduating), a fill
-     that lands after the 30 s limit with no tick in between, an answer older than its order, a second answer, failed
-     exits and their retries, lost and restored sell routes, a pool coin hit by its stop, a coin that graduates while
-     held, invalid snapshots, Jupiter prices without a SOL price, a stale price at the edge of 20 s, a repeated high,
-     failed checks (danger flag, no audit, no RugCheck report, the stricter checks), a dead coin, a market-data halt,
-     a restart with orders in flight, a failed save, a 27-minute outage, and 5.7 quiet days (equity thinning, pruning).
-   Writes OUTDIR/v11-inputs/... and OUTDIR/v11.json like the server does, plus every save (OUTDIR/v11-saves.jsonl.gz:
-   [run, n, at, ok, state] per line) so the re-check can compare at every save, not only at restarts and the end; prints what was covered and exits 1 if an
-   intended path did not happen.  Usage: node v11_e0_scenarios.js OUTDIR */
+     that lands after the 30 s limit with no tick in between, an answer after its order failed, and (defensive inputs a
+     live run cannot record) an answer older than its order and repeated answers; failed exits and their retries, lost
+     and restored sell routes, a pool coin hit by its stop, a coin that graduates while held, invalid snapshots, Jupiter
+     prices without a SOL price, a stale price at the edge of 20 s, a repeated high, failed checks (danger flag, no
+     audit, no RugCheck report, the stricter checks), a dead coin, a market-data halt, a restart with orders in flight,
+     a failed save, a 27-minute outage, and 5.7 quiet days (equity thinning, pruning).
+   Writes OUTDIR/v11-inputs/... and OUTDIR/v11.json like the server does, plus every save (OUTDIR/v11-saves.jsonl.gz,
+   [run, n, at, ok, state] per line) so the re-check compares at every save, not only at restarts and the end. Prints
+   what was covered and exits 1 if an intended path did not happen.
+   Usage: node v11_e0_scenarios.js OUTDIR   (OUTDIR is deleted and rewritten, unless it is neither empty nor an earlier
+   output of this script) */
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const REPO = path.resolve(__dirname, '../..');
 const REC = require(path.join(REPO, 'server/v11/record.js'));
@@ -96,8 +99,8 @@ const venueAt = (c, t) => (c.venue ? c.venue(t) : 'curve');
 
 // quote answers per (account, coin, side) attempt; anything not listed is a normal fill 1 s later
 const PLAN = {
-  'E0-U:A:buy': ['400'], 'E0-U2:A:buy': ['transport'], 'E0-U30:A:buy': ['invalid'], 'E0-T25:A:buy': ['silent'],
-  'E0-GRN:A:buy': ['moved'], 'E0-STR:A:buy': ['late'], 'E0-D55:A:buy': ['empty'],
+  'E0-U:A:buy': ['400'], 'E0-U2:A:buy': ['transport'], 'E0-U30:A:buy': ['invalid'],
+  'E0-GRN:A:buy': ['moved'], 'E0-STR:A:buy': ['late'], 'E0-D55:A:buy': ['empty'], 'E0-T25:A:buy': ['afterTTL'],
   'E0-U:A:sell': ['400', 'transport'], 'E0-U2:A:sell': ['errbody', 'early'], 'E0-U30:A:sell': ['nan'], 'E0-STR:A:sell': ['twice'],
   'mark:A': ['ok', '400', 'invalid', 'ok', 'transport'],
   'E0-U:C:buy': ['slow'], 'E0-U2:C:buy': ['slow'], 'E0-U30:C:buy': ['slow'], 'E0-T25:C:buy': ['slow'], 'E0-GRN:C:buy': ['slow'], 'E0-D55:C:buy': ['slow'],
@@ -109,7 +112,8 @@ const tries = {};
 function answer(r, t) {
   const c = byM[r.m], key = r.orderId ? `${r.orderId.split(':')[0]}:${c.k}:${r.side}` : `mark:${c.k}`;
   const n = tries[key] = (tries[key] || 0) + 1, kind = (PLAN[key] || [])[n - 1] || 'ok';
-  const at = t + (kind === 'late' ? 31000 : kind === 'slow' ? 12000 : kind === 'tick' ? 5000 : 1000);   // 'tick': lands exactly on the next tick
+  // 'late' lands after 30 s with no tick in between, 'afterTTL' after the tick that failed the order, 'tick' exactly on a tick
+  const at = t + (kind === 'late' ? 31000 : kind === 'afterTTL' ? 36000 : kind === 'slow' ? 12000 : kind === 'tick' ? 5000 : 1000);
   const base = { id: `q:${r.orderId || r.m}:${at}`, type: 'quote', at, reqAt: t, orderId: r.orderId || null, m: r.m, side: r.side, inAmount: r.amount };
   const fill = (at2, k2) => {
     const p = c.price(at2) || c.price(t) || c.price.end, ps = p / SOL, v = venueAt(c, at2);
@@ -125,6 +129,7 @@ function answer(r, t) {
     case 'errbody': return [Object.assign(base, { valid: true, ok: false, err: 'Could not find any route' })];
     case 'invalid': return [Object.assign(base, { valid: false, reason: 'quote: inAmount/outAmount/routePlan missing (schema change?)' })];
     case 'empty': return [Object.assign(base, { valid: false, reason: 'quote: empty response' })];
+    // 'early', '400dup' and 'twice' are defensive inputs: one live request yields one answer stamped after it
     case 'early': return [Object.assign(fill(t + 1000), { at: t - 1000, id: `q:${r.orderId}:${t - 1000}x` }), fill(t + 2000)];
     case '400dup': { const e = Object.assign(base, { valid: true, ok: false, err: 'no route (HTTP 400)', noRoute: true }); return [e, Object.assign({}, e)]; }   // delivered twice
     case 'twice': return [fill(t + 1000), fill(t + 1500), fill(t + 1000)];   // a second answer, then the first one again (same id)
@@ -136,7 +141,12 @@ function answer(r, t) {
 const rec = REC.recorder(), files = [], seenLog = [], errors = [], saves = [];
 let eng = null, saveN = 0, committed = null, run = 0, fileStart = null, part = 0;
 const pending = [];
-const ingest = ev => { rec.event(ev); try { eng.ingest(ev); } catch (e) { errors.push('v11 ingest: ' + e.message); } };
+const markIds = new Set();
+let dupMarks = 0;
+const ingest = ev => {
+  if (ev.type === 'quote' && !ev.orderId) { if (markIds.has(ev.id)) dupMarks++; markIds.add(ev.id); }
+  rec.event(ev); try { eng.ingest(ev); } catch (e) { errors.push('v11 ingest: ' + e.message); }
+};
 function cut(at) {
   const lines = rec.take(); if (!lines.length) return;
   const iso = new Date(fileStart).toISOString();
@@ -228,7 +238,14 @@ save(min(240) + 4101 * 120000, true);
 cut(min(240) + 4101 * 120000);
 
 // ------------------------------------------------------------------------------------------------ write and report
+// only a folder this script made (it carries sim_out_scenarios.json) or an empty one is cleared: a real-data folder has
+// the same v11-inputs/ and v11.json
+if (fs.existsSync(OUT) && fs.readdirSync(OUT).length && !fs.existsSync(path.join(OUT, 'sim_out_scenarios.json'))) {
+  console.log(`   ${OUT} is not empty and not an output of this script: not clearing it (give an empty or new folder)`); process.exit(2);
+}
 fs.rmSync(OUT, { recursive: true, force: true });
+fs.mkdirSync(OUT, { recursive: true });
+fs.writeFileSync(path.join(OUT, 'sim_out_scenarios.json'), '{}');
 for (const f of files) {
   const p = path.join(OUT, f.name);
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -259,11 +276,14 @@ const want = {
   'time limit': has('PositionClosed', e => isE0(e) && e.reason === 'time'),
   'time limit on the exact ms': has('OrderRequested', e => e.acct === 'E0-U30' && e.side === 'sell' && /minute limit/.test(e.why) && seenLog.some(f => f.type === 'OrderFilled' && f.acct === 'E0-U30' && f.side === 'buy' && e.at - (f.at) === 30 * 60000)),
   'NaN impact on a buy': has('OrderFilled', e => isE0(e) && e.side === 'buy' && Number.isNaN(e.impact)),
-  'route quote delivered twice': (tries['mark:N'] || 0) >= 1,
+  'route quote delivered twice': dupMarks >= 1,
+  'answer after the order failed': has('QuoteIgnored', e => e.why === 'order already failed'),
   'held through graduation (paused)': has('PositionReviewed', e => isE0(e) && e.state === 'paused'),
   'exit unavailable': has('PositionReviewed', e => isE0(e) && e.state === 'exit_unavailable'),
   'unpriceable': has('PositionReviewed', e => isE0(e) && e.state === 'unpriceable'),
-  'invalid snapshot': has('DataInvalid'), 'entries halted': has('EntriesHalted'), 'entries resumed': has('EntriesResumed'),
+  'invalid snapshot': has('DataInvalid'),
+  'entries halted (60 s without prices)': has('EntriesHalted', e => e.at >= SILENT[0][0] + 60000 && e.at <= SILENT[0][1]),
+  'entries resumed': has('EntriesResumed', e => e.at > SILENT[0][0] + 60000 && e.at <= SILENT[0][1] + 5000),
   'checks failed': has('EligibilityDecided', e => !e.pass && isE0(e)), 'stricter checks failed only': has('EligibilityDecided', e => !e.pass && e.acct === 'E0-STR' && e.m === COINS.find(c => c.k === 'H').m),
   'cancelled: restarted': has('OrderCancelled', e => isE0(e) && e.why === 'server restarted'), 'cancelled: offline': has('OrderCancelled', e => isE0(e) && e.why === 'server offline'),
   'coverage gap': has('CoverageGap'),
