@@ -1,8 +1,28 @@
 name: sniper
+# The Meme Sniper paper bots. Each run lasts about 5 h 45 min and saves the bots' state to the `data` branch every
+# couple of minutes. At the end it asks for the next run, which waits until this one has finished and then carries on
+# from the saved state. The watchdog workflow restarts the chain if it ever breaks. Paper only: no wallet, no keys.
 on:
   workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: sniper
+  cancel-in-progress: false
 jobs:
-  run:
+  bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 358
     steps:
-      - run: echo "placeholder, the bot is added next"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the paper bots
+        run: node server/run.js
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SECONDS: '20700'
