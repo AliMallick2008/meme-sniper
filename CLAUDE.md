@@ -84,14 +84,16 @@ python3 dashboard/build.py                          # build the page
 for f in dashboard/dist/_s*.js; do node --check $f; done
 node dashboard/tests/engine_unit.js                 # 22 engine unit tests (curve math, fills, rearm, memes)
 node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 engine tests (T01-T20)
-python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 21 min outage) vs the Python reference, research records vs market (~6 min)
+python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 21 min outage) vs the Python reference, research records vs market,
+                                                    # v11 causal checks + exact replay, E0/HOLD vs the Python re-implementation on that run and on a scripted
+                                                    # failure-path market (v11_e0_ref.py, v11_e0_scenarios.js) (~12 min)
 python3 dashboard/tests/server_page_check.py        # page in server mode on that output: same bots, chart, replay, API budget, takeover (~3 min)
 python3 dashboard/tests/sniper_e2e_run.py           # page local mode, scripted 3.2 h market vs reference (~10 min)
 python3 dashboard/tests/sniper_e2e_more.py          # flaky APIs, reload, closed 37 min, two tabs
 python3 dashboard/tests/sniper_e2e_busy.py          # 150 crossings stress, GeckoTerminal budget
 ```
 
-Test outputs go to `dashboard/.out/`. Every result must say `ALL BOTS MATCH` / `SERVER PAGE OK`.
+Test outputs go to `dashboard/.out/`. Every result must say `ALL BOTS MATCH` / `V11 CAUSAL CHECKS OK` / `ALL E0 MATCH` / `SERVER PAGE OK`.
 Deploy = push to `main`: the dashboard workflow publishes the page, and the running bot picks up server changes within 5 min.
 
 ## Current work
@@ -99,7 +101,9 @@ Deploy = push to `main`: the dashboard workflow publishes the page, and the runn
 Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in
 `docs/PROGRESS.md`. Resume from PROGRESS.md. Phases 0-4 are done; V2 strategies A/B/C are locked (v2.0, Oct 21 12:00 PM
 ET, `research/v2_protocol.md`) and run forward on the server. Phase 5: collect data, run the ablations on the recorded
-inputs, write `docs/v11-report.md`. The server sim also checks v11: `V11 CAUSAL CHECKS OK` and `V11 REPLAY EXACT`.
+inputs, write `docs/v11-report.md`. The server sim also checks v11: `V11 CAUSAL CHECKS OK`, `V11 REPLAY EXACT` and
+`ALL E0 MATCH` (E0/HOLD re-implemented in Python from the rules). On real data: `server/tools/fetch_research.sh <dir>`, put
+the data branch's `v11.json` in `<dir>`, then `python3 dashboard/tests/v11_e0_ref.py <dir> --live`.
 
 ## Status (Oct 21 2026, 12:15 PM ET)
 
