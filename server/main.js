@@ -79,7 +79,7 @@ async function runServer(o) {
         core.prune();
         const J = core.J(), { tc, ...rest } = J;
         dirty = false; urgent = false;
-        await store.save({ state: { v: 1, srv: srvInfo(), J: rest }, young: core.youngOut(), rq: research.out(), tc });
+        await store.save({ state: { v: 1, exp: 'legacy-v10', srv: srvInfo(), J: rest }, young: core.youngOut(), rq: research.out(), tc });
         lastSave = nowMs();
       } catch (e) {
         dirty = true; urgent = urgent || wasUrgent; lastSave = nowMs() - saveEvery + 30000;

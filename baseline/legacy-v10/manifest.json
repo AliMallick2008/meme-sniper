@@ -1,0 +1,280 @@
+{
+  "experiment": "legacy-v10",
+  "label": "Legacy v10 Meme Sniper bots (U, U2, U30, T25, D55, GRN, STR) under LEGACY ASSUMPTIONS: watch windows start at the $7K crossing even when checks finish later, fills at 1-minute candle touches, candle-replay catch-up after downtime, stale/forward SOL fallbacks. Kept running unchanged as the comparison baseline; not evidence-backed models (audit Oct 21 2026, findings 01-04, 12, 19).",
+  "rules_locked_utc": "2026-10-20T12:25:00Z",
+  "server_journal_start_utc": "2026-10-21T08:19:25.003000Z",
+  "exported_utc": "2026-10-21T09:02:26Z",
+  "journal_file": "journal-snapshot.json",
+  "journal_sha256": "695aa4e4c165dcb758cc2e1fdf66057e30e50cbeaea74d6b4b0787ff0f36af7b",
+  "journal_saved_utc": "2026-10-21T09:02:22.619000Z",
+  "git_commit": "69620772c2a407e27881905516d48d51dadda03d",
+  "accounts_at_export": {
+    "U": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": {
+        "sym": "ok",
+        "m": "5GGTcwdGNHVmojpKfWpNzqWytpFtFB7fnU8gx6WUpump",
+        "entryT": 1792571280,
+        "cost": 1
+      }
+    },
+    "U2": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": {
+        "sym": "ok",
+        "m": "5GGTcwdGNHVmojpKfWpNzqWytpFtFB7fnU8gx6WUpump",
+        "entryT": 1792571280,
+        "cost": 1
+      }
+    },
+    "U30": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": {
+        "sym": "ok",
+        "m": "5GGTcwdGNHVmojpKfWpNzqWytpFtFB7fnU8gx6WUpump",
+        "entryT": 1792571280,
+        "cost": 1
+      }
+    },
+    "T25": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": {
+        "sym": "ok",
+        "m": "5GGTcwdGNHVmojpKfWpNzqWytpFtFB7fnU8gx6WUpump",
+        "entryT": 1792571280,
+        "cost": 1
+      }
+    },
+    "D55": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": {
+        "sym": "ok",
+        "m": "5GGTcwdGNHVmojpKfWpNzqWytpFtFB7fnU8gx6WUpump",
+        "entryT": 1792571280,
+        "cost": 1
+      }
+    },
+    "GRN": {
+      "trades": 1,
+      "realized_sol": 10.01,
+      "open": {
+        "sym": "NICE",
+        "m": "14CfkJPJMh7mtxMtgw1Ybtw4gibodE4gstfW3CE4pump",
+        "entryT": 1792572240,
+        "cost": 1
+      }
+    },
+    "STR": {
+      "trades": 0,
+      "realized_sol": 10,
+      "open": null
+    }
+  },
+  "rules": {
+    "LOCKED": 1792499100,
+    "START_SOL": 10,
+    "BASE": {
+      "dip": 0.4,
+      "hiRef": "launch",
+      "tp": 0.01,
+      "sl": 0.9,
+      "maxHold": 0,
+      "entry": "limit",
+      "mcMin": 7000,
+      "stake": 1,
+      "exec": 0.01,
+      "rearm": true
+    },
+    "CHK": {
+      "devMax": 10,
+      "topMax": 30,
+      "needMeme": 1
+    },
+    "FOLLOW_S": 4500,
+    "DEAD_S": 1200,
+    "DEAD_MC": 4500,
+    "CROSS_MC": 7000,
+    "WATCH_S": 7200,
+    "META_S": 7200,
+    "SLOTS": 6,
+    "BOTS": [
+      {
+        "id": "U",
+        "name": "Your rules",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 0,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "U2",
+        "name": "+ 2 h exit",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 120,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "U30",
+        "name": "+ 30 min exit",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 30,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "T25",
+        "name": "Target +25%",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.25,
+          "sl": 0.9,
+          "maxHold": 120,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "D55",
+        "name": "Deeper dip",
+        "P": {
+          "dip": 0.55,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 120,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "GRN",
+        "name": "Bounce entry",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 120,
+          "entry": "green",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1
+        }
+      },
+      {
+        "id": "STR",
+        "name": "Stricter checks",
+        "P": {
+          "dip": 0.4,
+          "hiRef": "launch",
+          "tp": 0.01,
+          "sl": 0.9,
+          "maxHold": 120,
+          "entry": "limit",
+          "mcMin": 7000,
+          "stake": 1,
+          "exec": 0.01,
+          "rearm": true
+        },
+        "C": {
+          "devMax": 10,
+          "topMax": 30,
+          "needMeme": 1,
+          "minHolders": 50,
+          "social": true,
+          "devMints": 10,
+          "rcMax": 50
+        }
+      }
+    ]
+  },
+  "source_sha256": {
+    ".github/workflows/dashboard.yml": "c0c650f879aef5d69e4c5071d555080e51b689695fb47104ceb5376a60e50626",
+    ".github/workflows/sniper.yml": "f1807abf6aede018a8cf0cb0d8519f4f8fc877510a5039f3b9ae946cbfea8633",
+    ".github/workflows/watchdog.yml": "25ed8e9fdb0e24a5511c6dbf307990cd2a55cad76603bf10a58827cadc3f18b8",
+    "dashboard/build.py": "4ba9dcd660d66cb31ecfa8a002ab98560d7d5fe7682aad69b52354900b4d0e98",
+    "dashboard/engine.js": "730d384303cafd20645e7633892e2b33202023f4bc3c04a9eedf754e2b59c33a",
+    "dashboard/make_icons.py": "47122cfd487fb136e73110f1d209d11622d2bdf13bccf602b5df428dd08cd9a3",
+    "dashboard/meme.js": "2a9c6c608a932bf2b1f36dbb62cf580afd8905a272fd84893dd1e09e5c581d9f",
+    "dashboard/page.html": "ee9b5424a3d0006cecb9923c26a1a862b0594ec31669c942025e713de9bc7974",
+    "dashboard/sniper_ui.js": "383cb02e675bf847557df2aa88326dbac5a3019e7851f8e4aa28d98f517154fe",
+    "dashboard/style.css": "2b645815bd9ef80c59415406dbeb5bad37530964e4389ca840381cc98794b286",
+    "dashboard/ui.js": "56d17cf32a34f467c476f145cdc9da70a1f92b3a5194d779aaf1ad071c556cc7",
+    "server/gitstore.js": "5ad682c56db8578e3de4c02f86603f1ce11dd702d1468bcf32b2aef9744453ae",
+    "server/main.js": "f1b9290bf96666b75d32a2ddc7869d3fe56588509cf497d07dd32970bc6561dc",
+    "server/research.js": "b546e5008a2eacc8bf354c4e14e58ebc04868ea0721c4df5191015c6613205ed",
+    "server/run.js": "e55000667ec9b5b22d394531498751c08d163cddff9b716c5e66175d9b23c37f",
+    "server/sim.js": "28769793e5af6d2c467be7aec84637f991d02af48fbb56ef9e7cee44d2f16874",
+    "server/sniper.js": "182e0836ef6a696821e6ca776c1849c5c23093eebda9ba05ebd49cd64f2df4b7",
+    "server/sniper_core.js": "5c3e8ca2ae7e5a5353c4b55df5094355899fe8376bb6dfbf57cdc927685cf767"
+  },
+  "browser_run_note": "Before the server (Oct 20 8:25 AM to Oct 21 ~4:19 AM ET) the same bots ran in the owner's browser; that journal stays in that browser (localStorage bpl_snipe_v2) and is summarized under the lab on the page there."
+}

@@ -73,6 +73,7 @@ Needs Node 22 and Python 3 with `playwright` and `pillow` (Chromium from Playwri
 python3 dashboard/build.py                          # build the page
 for f in dashboard/dist/_s*.js; do node --check $f; done
 node dashboard/tests/engine_unit.js                 # 22 engine unit tests (curve math, fills, rearm, memes)
+node --test server/tests/*.test.js                  # paper-only guard, frozen legacy baseline, v11 engine tests (T01-T20)
 python3 dashboard/tests/server_sim_test.py 2.5 3    # server bots in 3 runs (handover + 21 min outage) vs the Python reference, research records vs market (~6 min)
 python3 dashboard/tests/server_page_check.py        # page in server mode on that output: same bots, chart, replay, API budget, takeover (~3 min)
 python3 dashboard/tests/sniper_e2e_run.py           # page local mode, scripted 3.2 h market vs reference (~10 min)
@@ -82,6 +83,11 @@ python3 dashboard/tests/sniper_e2e_busy.py          # 150 crossings stress, Geck
 
 Test outputs go to `dashboard/.out/`. Every result must say `ALL BOTS MATCH` / `SERVER PAGE OK`.
 Deploy = push to `main`: the dashboard workflow publishes the page, and the running bot picks up server changes within 5 min.
+
+## Current work
+
+Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in
+`docs/PROGRESS.md`. Resume from PROGRESS.md.
 
 ## Status (Oct 21 2026, 4:45 AM ET)
 
