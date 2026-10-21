@@ -124,3 +124,27 @@ the recorded window and judged on the last 40%, as section 4 says.
   replace newer. The v2.0 rules are unchanged, but 11.0 results are not comparable, so every v11 account was archived
   (visible in the v11 tab) and restarted with 10 SOL at the 11.1 start; the v2.0 forward record counts from there.
   11.0 results for reference: A +0.191 SOL (23 trades, 8 wins), B -1.082 (7, 1 win), C -0.019 (1).
+
+## 5. Pre-registered v2.1 study (written Wed Oct 21 2026, 4:55 PM ET)
+
+Written before looking at any outcome under engine 11.1. What had been seen: the live 11.0 results (archived), and one
+replay of the 4 recorded 11.0 hours with 11.1 logic and model fills (A -1.28 SOL over 10 trades, B -0.50 over 5, C -0.30
+over 1), which showed loss-limit exits filling well past the limit in fast drops, profit protection giving back a lot in
+fast crashes, and two rugs. Those hours are before the study window and are not used below.
+
+- **Data:** `v11-inputs/` from the 11.1 start (Oct 21 2026, 20:14 UTC) to at least Oct 26 2026, 20:14 UTC (5 days),
+  replayed with `server/tools/v11_ablation.js` (model fills at the last observed price, 1 s latency, 0.5% drift; the
+  same execution model for every variant). Coverage gaps stay gaps.
+- **Variants** (each v2.0 strategy, one change at a time; `grid()` in the tool): `volcap` (structure threshold capped at
+  30%), `nospike` (A only: no entry right after a minute up 25%+), `loss` (loss limit A 10%, B 12%, C 8%), `give` (profit
+  protection gives back at most 25%), `cost` (round trip at most 4.5% for A and B, 3.5% for C), `safe` (no RugCheck
+  insider network and RugCheck top-10 share at most 25%; coins without a full report are not eligible), `demand` (A: 62%
+  buys and 5 net buyers; B and C: 60% buys). Baselines reported beside them: `~timed`, `~nodemand`, `~random`, E0, HOLD.
+- **Split:** by decision time; the first 60% of the window chooses, the last 40% judges.
+- **Pick rule (per strategy):** among the variants with at least 20 closed trades in the choose window, the one with the
+  highest net SOL there, if it beats the unchanged v2.0 replay's net there. **Judge:** on the last 40% it must have net
+  above 0 and at least the unchanged replay's net, and stay above 0 with `--drift 0.01` and with `--latency 3000`.
+- **If it passes:** v2.1 = v2.0 plus that one change, locked at that moment, running forward beside v2.0 as new
+  accounts (A2/B2/C2). If nothing passes: no v2.1; v2.0 keeps running and the report says so.
+- **Also reported, not used for the pick:** green days, profit factor, maximum drawdown, fills on old prices, and the
+  forward (quote-filled) v2.0 results over the same days.

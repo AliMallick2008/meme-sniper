@@ -32,11 +32,9 @@ function variants() {
       ['random', { random: true }, 'same moments, a random coin that passed the gates']]) {
       out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, ablate: ab, P: Object.assign({}, a.P), C: Object.assign({}, a.C) }));
     }
-    // v2.1 candidates noted in research/v2_protocol.md (parameters only; same code)
-    const cand = [['volcap', { volCap: 0.30 }, 'structure threshold capped at 30%']];
-    if (a.strat === 'A') cand.push(['nospike', { r1Max: 0.25 }, 'no entry after a 25%+ minute']);
-    for (const [suf, extra, what] of cand)
-      out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, P: Object.assign({}, a.P, extra), C: Object.assign({}, a.C) }));
+    // the pre-registered v2.1 grid (research/v2_protocol.md section 5): one change at a time from v2.0
+    for (const [suf, extra, what, cExtra] of grid(a.strat))
+      out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, P: Object.assign({}, a.P, extra), C: Object.assign({}, a.C, cExtra || {}) }));
   }
   return out;
 }
@@ -44,6 +42,17 @@ function variants() {
 /* fillMaxAge: a model fill uses the last price observed at most this long before it. The live run polls the coins it
    holds every 12 s, but a replayed variant may hold a coin the live run followed only every 30 s (slow list) or every
    2 minutes (coins it had dropped): fills on prices older than 30 s are counted per account as "stale fills". */
+// research/v2_protocol.md section 5: [suffix, P changes, what, C (gate) changes]
+function grid(strat) {
+  const g = [['volcap', { volCap: 0.30 }, 'structure threshold capped at 30%']];
+  if (strat === 'A') g.push(['nospike', { r1Max: 0.25 }, 'no entry after a 25%+ minute']);
+  g.push(['loss', { maxLoss: { A: 0.10, B: 0.12, C: 0.08 }[strat] }, 'tighter loss limit']);
+  g.push(['give', { giveBack: 0.25 }, 'gives back at most 25% of a gain']);
+  g.push(['cost', { rtMax: { A: 0.045, B: 0.045, C: 0.035 }[strat] }, 'cheaper round trips only']);
+  g.push(['safe', {}, 'no insider network, RugCheck top 10 at most 25%', { noInsiders: true, rcTop10Max: 25 }]);
+  g.push(['demand', { dem: { A: { buy: 0.62, net: 5 }, B: { buy: 0.60 }, C: { buy: 0.60 } }[strat] }, 'stronger buying required']);
+  return g;
+}
 function run(dir, { from = 0, to = Infinity, latency = 1000, accounts = variants, fillMaxAge = 150000 } = {}) {
   const list = files(require('path').join(dir, 'v11-inputs'));
   const eng = createEngine({ accounts });
@@ -150,4 +159,4 @@ if (require.main === module) {
   console.log('fills on prices older than 30 s (coins the live run did not follow closely):', JSON.stringify(n.staleFills));
   if (arg('json')) fs.writeFileSync(arg('json'), JSON.stringify({ n, rows, cut }, null, 1));
 }
-module.exports = { run, report, variants, daily, bootstrap };
+module.exports = { run, report, variants, grid, daily, bootstrap };

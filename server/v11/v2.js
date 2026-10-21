@@ -76,6 +76,13 @@ function gates(c, C) {
   if (!c.rc) out.push(g('rc', 'No RugCheck danger flag', G.U, null, null, 'no report yet'));
   else if (!c.rc.valid) out.push(g('rc', 'No RugCheck danger flag', G.U, null, c.rc.at, c.rc.reason || 'report unavailable'));
   else { const d = (c.rc.risks || []).filter(r => r[1] === 'danger').map(r => r[0]); out.push(g('rc', 'No RugCheck danger flag', d.length ? G.F : G.P, d.length ? d.join(', ') : 'clean', c.rc.at, 'rugcheck')); }
+  // research-only gates (unset in v2.0): RugCheck's insider-network count and its top-10 share without the curve/pool
+  // (the full report is fetched only when Jupiter has no dev share, so other coins stay unknown here)
+  const r = c.rcr && c.rcr.valid ? c.rcr : null;
+  if (C.noInsiders) out.push(!r || r.insiders == null || !isFinite(r.insiders) ? g('ins', 'No insider wallet network (RugCheck)', G.U, null, r && r.at, 'no full report')
+    : g('ins', 'No insider wallet network (RugCheck)', r.insiders > 0 ? G.F : G.P, r.insiders, r.at, 'rugcheck report'));
+  if (C.rcTop10Max != null) out.push(!r || r.top10 == null || !isFinite(r.top10) ? g('top10', `RugCheck top 10 holders ${C.rcTop10Max}% or less`, G.U, null, r && r.at, 'no full report')
+    : g('top10', `RugCheck top 10 holders ${C.rcTop10Max}% or less`, r.top10 <= C.rcTop10Max ? G.P : G.F, +r.top10.toFixed(1), r.at, 'rugcheck report'));
   return out;
 }
 
@@ -100,6 +107,7 @@ function hot(id, c, at) {
 // setup + demand checks from features f. Returns { setup: [...], demand: [...], score, parts, invalidP, invalidWhy }
 function evaluate(id, c, f, at, P) {
   const s = [], d = [];
+  const dm = (P && P.dem) || {};                          // research-only overrides of the demand thresholds (unset in v2.0)
   let score = 0, parts = {}, invalidP = null, invalidWhy = null;
   if (id === 'A') {
     chk(s, 'mc', 'market cap $8K-$40K', f.mc, f.mc >= 8000 && f.mc <= 40000, f.mc ? '$' + (f.mc / 1000).toFixed(1) + 'K' : null);
@@ -109,8 +117,9 @@ function evaluate(id, c, f, at, P) {
     chk(s, 'green', 'last 1-minute bar green', f.greenBar, f.greenBar === true, f.greenBar);
     // P.r1Max (research variants only; unset in v2.0): no entry right after a single-minute spike
     if (P && P.r1Max) chk(s, 'spike', `up no more than ${Math.round(P.r1Max * 100)}% in the last minute`, f.r1, f.r1 <= P.r1Max, pct(f.r1));
-    chk(d, 'buy', '58%+ of 5-minute volume is buys', f.buyShare5, f.buyShare5 >= 0.58, pct(f.buyShare5));
-    chk(d, 'net', '3+ more buyers than sellers (5 min)', f.netBuyers5, f.netBuyers5 >= 3);
+    const aBuy = dm.buy || 0.58, aNet = dm.net || 3;
+    chk(d, 'buy', `${Math.round(aBuy * 100)}%+ of 5-minute volume is buys`, f.buyShare5, f.buyShare5 >= aBuy, pct(f.buyShare5));
+    chk(d, 'net', `${aNet}+ more buyers than sellers (5 min)`, f.netBuyers5, f.netBuyers5 >= aNet);
     chk(d, 'tr', '12+ traders (5 min)', f.traders5, f.traders5 >= 12);
     const lows = MK.doneBars(c, at).slice(-3).map(b => b.l);
     if (lows.length) { invalidP = Math.min(...lows) * 0.98; invalidWhy = 'back under the base of the move (lowest of the last 3 minutes)'; }
@@ -122,7 +131,8 @@ function evaluate(id, c, f, at, P) {
     chk(s, 'bounce', '10%+ off the pullback low', f.bounce, f.bounce >= 0.10, pct(f.bounce));
     chk(s, 'held', 'the low is 2+ minutes old', f.lowSinceHiAt, f.lowSinceHiAt != null && at - f.lowSinceHiAt >= 120000, f.lowSinceHiAt != null ? Math.round((at - f.lowSinceHiAt) / 1000) + ' s' : null);
     chk(s, 'green', 'last minute green with a higher low', f.greenBar, f.greenBar === true && f.higherLow === true, `${f.greenBar}/${f.higherLow}`);
-    chk(d, 'buy', '55%+ of 5-minute volume is buys', f.buyShare5, f.buyShare5 >= 0.55, pct(f.buyShare5));
+    const bBuy = dm.buy || 0.55;
+    chk(d, 'buy', `${Math.round(bBuy * 100)}%+ of 5-minute volume is buys`, f.buyShare5, f.buyShare5 >= bBuy, pct(f.buyShare5));
     chk(d, 'net', '2+ more buyers than sellers (5 min)', f.netBuyers5, f.netBuyers5 >= 2);
     chk(d, 'tr', '8+ traders (5 min)', f.traders5, f.traders5 >= 8);
     chk(d, 'ease', 'selling eased: 5-minute sells at most 75% of their heaviest since the high', f.sellEasing, f.sellEasing === true,
@@ -134,7 +144,8 @@ function evaluate(id, c, f, at, P) {
     chk(s, 'r15', 'up 8%+ in 15 minutes', f.r15, f.r15 >= 0.08, pct(f.r15));
     chk(s, 'avg', 'above its 15-minute average', f.avg15, f.p >= f.avg15, f.avg15 ? pct(f.p / f.avg15 - 1) : null);
     chk(s, 'dd', 'within 15% of its high', f.dd, f.dd <= 0.15, pct(f.dd));
-    chk(d, 'buy', '55%+ of 5-minute volume is buys', f.buyShare5, f.buyShare5 >= 0.55, pct(f.buyShare5));
+    const cBuy = dm.buy || 0.55;
+    chk(d, 'buy', `${Math.round(cBuy * 100)}%+ of 5-minute volume is buys`, f.buyShare5, f.buyShare5 >= cBuy, pct(f.buyShare5));
     chk(d, 'buy1h', '52%+ of 1-hour volume is buys', f.buyShare1h, f.buyShare1h >= 0.52, pct(f.buyShare1h));
     chk(d, 'net', '3+ more buyers than sellers (5 min)', f.netBuyers5, f.netBuyers5 >= 3);
     chk(d, 'tr', '15+ traders (5 min)', f.traders5, f.traders5 >= 15);
