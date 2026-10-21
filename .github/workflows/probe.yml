@@ -1,0 +1,27 @@
+# Read-only probe of the public market-data APIs from a GitHub runner (the same network the bots use).
+# Run by hand: gh workflow run probe.yml -f urls="https://... https://..."; the responses are in the job log.
+# Paper only: plain GET requests to public endpoints, no secrets, no wallets.
+name: probe
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: space-separated public URLs to GET
+        required: true
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: fetch
+        env:
+          URLS: ${{ inputs.urls }}
+        run: |
+          for u in $URLS; do
+            case "$u" in https://*) ;; *) echo "skip $u"; continue;; esac
+            echo "=== $u"
+            curl -sS -m 20 -A "meme-sniper-probe" -w "\nHTTP %{http_code}\n" "$u" | head -c 80000
+            echo
+          done
