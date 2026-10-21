@@ -31,10 +31,11 @@ const store = {
     const state = rd('state.json'); if (!state) return null;
     const tc = {}, td = path.join(DIR, 'tc');
     if (fs.existsSync(td)) for (const f of fs.readdirSync(td)) tc[f.replace(/\.json$/, '')] = rd('tc/' + f);
-    return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc };
+    return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc, v11: rd('v11.json') };
   },
-  async save({ state, young, rq, tc }) {
+  async save({ state, young, rq, tc, v11 }) {
     const s = [JSON.stringify(state), JSON.stringify(young), JSON.stringify(rq)];
+    if (v11) { const v = JSON.stringify(v11); fs.writeFileSync(path.join(DIR, 'v11.json'), v); sizes.v11 = Math.max(sizes.v11 || 0, v.length); sizes.v11view = Math.max(sizes.v11view || 0, JSON.stringify(state.v11 || null).length); }
     fs.mkdirSync(path.join(DIR, 'tc'), { recursive: true });
     fs.writeFileSync(path.join(DIR, 'state.json'), s[0]); fs.writeFileSync(path.join(DIR, 'young.json'), s[1]); fs.writeFileSync(path.join(DIR, 'rq.json'), s[2]);
     for (const [m, v] of Object.entries(tc || {})) fs.writeFileSync(path.join(DIR, 'tc', m + '.json'), JSON.stringify(v));
@@ -62,7 +63,7 @@ const logs = [];
     nx.res();
   }
   const J = out ? out.core.J() : null;
-  fs.writeFileSync(path.join(DIR, `sim_out_${RUN}.json`), JSON.stringify({ now: clock.t / 1000, J, research: out && out.research.stats(), lanes: out && Object.fromEntries(Object.entries(out.core.LANES).map(([k, L]) => [k, [L.ok, L.fail, L.limited, L.lastErr]])), errors: out && out.core.M.errors, sizes, pops, logs }));
+  fs.writeFileSync(path.join(DIR, `sim_out_${RUN}.json`), JSON.stringify({ now: clock.t / 1000, J, research: out && out.research.stats(), v11: out && out.v11 ? out.v11.stats() : null, lanes: out && Object.fromEntries(Object.entries(out.core.LANES).map(([k, L]) => [k, [L.ok, L.fail, L.limited, L.lastErr]])), errors: out && out.core.M.errors, sizes, pops, logs }));
   if (err) { console.error(String(err && err.stack || err)); process.exit(1); }
   console.log(logs.slice(-3).join('\n'));
   process.exit(0);

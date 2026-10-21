@@ -103,4 +103,153 @@ const HOLD = {
   entry() {}, review() { return null; }, onEligible() {}, interest() { return []; },
 };
 function e0All() { return R.BOTS.map(E0); }
-module.exports = { E0, HOLD, e0All, E0_LOCKED, E0_SLIP };
+
+/* ---------------------------------------------------------------- v2 strategies (audit C2, C3, C4)
+   A: Launch Momentum, B: Confirmed Pullback Recovery, C: Post-Graduation Momentum. Strict four-valued gates. Every
+   10 s each strategy compares all its candidates at that moment, keeps those whose setup is confirmed by price
+   structure AND real demand (buy vs sell notional) and whose plan fits (size from depth, round-trip cost and break-even,
+   a reachable protective level, risk budget), and buys the best one, recording why it beat the others. While holding
+   it re-checks the thesis on every event: an emergency (authority turned on, new danger flag, dev dump, exit route
+   collapsing) is enough to leave; otherwise it takes two independent evidence families gone bad and staying bad
+   (structure, demand, liquidity, holders), or the protective level, the risk budget, the trailing profit guard (from
+   marks seen so far, never later ones) or the horizon. No fixed target: whether a target helps is a later experiment.
+   All thresholds are first guesses to be tested, not tuned values. */
+const FEAT = require('./features.js');
+const RISK = require('./risk.js');
+const V2_LOCKED = Date.UTC(2026, 9, 21, 11, 0, 0) / 1000;   // set again at deploy if anything below changes
+const BASE = { stake: 1, everyS: 10, slip: 0.08, maxImpactQuote: 0.08, persistS: 20, coolLossS: 1800, coolWinS: 600, coolFailS: 60,
+  risk: { maxImpact: 0.06, riskBudget: 0.3, maxBreakEven: 0.12, minStake: 0.1, stopGap: 0.15 } };
+const no = why => ({ ok: false, why });
+const pct = (v, d = 0) => (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+
+const SPECS = {
+  A: { label: 'A Launch momentum', P: { windowS: 2700, maxAgeS: 2700, mcMax: 30000, horizonS: 1200, stopFrac: 0.25, trailFrom: 0.2, trail: 0.12 },
+    setup(F, k, w, ctx, P) {
+      if (k.stage !== 'curve') return no('not on the bonding curve');
+      if (F.age == null || F.age > P.maxAgeS) return no('older than 45 min');
+      if (!(F.mc > 0) || F.mc > P.mcMax) return no('market cap over $30K');
+      if (F.ret3 == null || F.ret3 < 0.08) return no(`no ignition (3 min ${F.ret3 == null ? '?' : pct(F.ret3)})`);
+      if (!(F.ret1 > 0)) return no('stalling in the last minute');
+      if (F.buyShare == null) return no('demand unknown (no buy/sell notional)');
+      if (F.buyShare < 0.6) return no(`buyers only ${(F.buyShare * 100).toFixed(0)}% of volume`);
+      if (!(F.traders >= 20)) return no(`${F.traders == null ? '?' : F.traders} traders in 5 min`);
+      if (F.dTraders != null && F.dTraders < 0) return no('traders falling');
+      if (F.ret1 > 0.25) return no(`vertical last minute (${pct(F.ret1)}): chasing`);
+      return { ok: true, score: Math.min(0.5, F.ret3) + (F.buyShare - 0.5) + Math.min(0.3, Math.max(0, F.netPct || 0) * 20), stopFrac: P.stopFrac,
+        why: `momentum ${pct(F.ret3)} in 3 min, buyers ${(F.buyShare * 100).toFixed(0)}% of volume, ${F.traders} traders`,
+        invalidation: ['two of structure / demand / liquidity / holders turn bad for 20 s', 'price under the 25% protective level', '20 min without the move'] };
+    } },
+  B: { label: 'B Confirmed pullback', P: { windowS: 3 * 3600, horizonS: 2700, minRun: 1.5, pullMin: 0.25, pullMax: 0.6, recover: 0.08, trailFrom: 0.25, trail: 0.15 },
+    setup(F, k, w, ctx, P) {
+      const hi = ctx.high(k), x0 = k.cross.mc / 1e9;
+      if (!(hi > 0) || hi / x0 < P.minRun) return no(`no strong prior move (high ${pct(hi / x0 - 1)} over the $7K crossing)`);
+      const pull = F.usd / hi - 1;
+      if (pull > -P.pullMin) return no(`no real pullback (${pct(pull)} from the high)`);
+      if (pull < -P.pullMax) return no(`a collapse, not a pullback (${pct(pull)})`);
+      if (F.fromLo == null || F.fromLo < P.recover) return no(`not recovering yet (${F.fromLo == null ? '?' : pct(F.fromLo)} off the low)`);
+      if (!F.reclaim) return no("no close above the previous minute's high");
+      if (F.buyShare == null || F.netPct == null) return no('demand unknown (no buy/sell notional)');
+      if (F.buyShare < 0.55 || F.netPct <= 0) return no(`selling not absorbed (buyers ${(F.buyShare * 100).toFixed(0)}%)`);
+      if (F.dShare != null && F.dShare < 0) return no('buy share falling again');
+      return { ok: true, score: Math.min(0.4, F.fromLo) + (F.buyShare - 0.5) + Math.min(0.3, F.netPct * 20), stopFrac: Math.max(0.05, 1 - F.lo15 * 0.97 / F.usd),
+        why: `pullback ${pct(pull)} from the high, back ${pct(F.fromLo)} off the low, buyers ${(F.buyShare * 100).toFixed(0)}%`,
+        invalidation: ['back under the pullback low', 'sellers take over again with the structure failing', '45 min without recovery'] };
+    } },
+  C: { label: 'C After graduation', P: { windowS: 6 * 3600, horizonS: 7200, minAfterGradS: 600, minLiqUsd: 15000, mcMin: 60000, stopFrac: 0.18, trailFrom: 0.3, trail: 0.15, maxImpact: 0.03 },
+    setup(F, k, w, ctx, P) {
+      if (k.stage !== 'pool') return no('not graduated');
+      if (F.at - k.stageAt < P.minAfterGradS) return no('graduated less than 10 min ago');
+      if (!(F.poolLiq >= P.minLiqUsd)) return no(`pool liquidity ${F.poolLiq == null ? 'unknown' : '$' + Math.round(F.poolLiq)}`);
+      if (!(F.mc >= P.mcMin)) return no('market cap under $60K');
+      if (F.ret15 == null || F.ret15 < 0.1 || !(F.usd > F.mean15)) return no('no 15-min trend');
+      if (F.buyShare == null || F.netPct == null) return no('demand unknown (no buy/sell notional)');
+      if (F.buyShare < 0.55 || F.netPct <= 0 || !(F.traders >= 30)) return no(`demand not confirmed (buyers ${(F.buyShare * 100).toFixed(0)}%, ${F.traders} traders)`);
+      return { ok: true, score: Math.min(0.5, F.ret15) + (F.buyShare - 0.5) + Math.min(0.3, F.netPct * 20), stopFrac: P.stopFrac,
+        why: `trend ${pct(F.ret15)} in 15 min on a $${Math.round(F.poolLiq / 1000)}K pool, buyers ${(F.buyShare * 100).toFixed(0)}%`,
+        invalidation: ['two evidence families bad for 20 s', '18% protective level', '2 h horizon'] };
+    } },
+};
+
+function V2(key) {
+  const spec = SPECS[key], P = Object.assign({}, BASE, spec.P, { risk: Object.assign({}, BASE.risk, spec.P.maxImpact ? { maxImpact: spec.P.maxImpact } : {}) });
+  const id = key, label = spec.label;
+  return {
+    id, kind: 'V2', gate: 'strict', label, locked: V2_LOCKED, rules: P,
+    onEligible(ctx, A, k, eligibleAt) {
+      if (A.watch.some(w => w.m === k.m)) return;
+      const to = key === 'A' && k.t0 ? Math.min(k.t0 + P.maxAgeS, k.cross.at + P.windowS) : k.cross.at + P.windowS;
+      if (eligibleAt >= to) return;
+      A.watch.push({ m: k.m, sym: k.sym, from: eligibleAt, to, done: null, lag: Math.round(eligibleAt - k.cross.at) });
+    },
+    onGateLost(ctx, A, k, at) { for (const w of A.watch) if (w.m === k.m && !w.done) { w.done = 'gates'; w.doneAt = at; } },
+    entry(ctx, A, at) {
+      if (ctx.halted() || at - (A.lastEval || 0) < P.everyS) return;
+      A.lastEval = at;
+      const C = ctx.C, cash = A.cash - C.prioSol - C.netFeeSol - C.rentSol, rows = [];
+      for (const w of A.watch) {
+        if (w.done) continue;
+        if (at >= w.to) { w.done = 'expired'; w.doneAt = at; continue; }
+        if (at < w.from) continue;
+        const k = ctx.coin(w.m);
+        if (!k) { w.done = 'gone'; continue; }
+        if (A.cool[w.m] && at < A.cool[w.m]) { rows.push({ w, sym: k.sym, ok: false, why: 'cooling down after the last trade' }); continue; }
+        if (!k.gs || !k.gs.ok) { rows.push({ w, sym: k.sym, ok: false, why: 'gates: ' + (k.gs ? k.gs.failed.concat(k.gs.unknown.map(u => u + '?')).join(', ') : 'checks pending') }); continue; }
+        const b = ctx.blocked(k, at);
+        if (b) { rows.push({ w, sym: k.sym, ok: false, why: b }); continue; }
+        const F = FEAT.features(k, at, ctx);
+        const s = spec.setup(F, k, w, ctx, P);
+        if (!s.ok) { rows.push({ w, sym: k.sym, ok: false, why: s.why }); continue; }
+        const plan = RISK.plan(Object.assign({ pSol: k.last.sol, stage: k.stage, liq: ctx.liqOf(k), at, stake: Math.min(P.stake, cash), stopFrac: s.stopFrac,
+          costs: { prioSol: C.prioSol, netFeeSol: C.netFeeSol, latency: C.latency } }, P.risk));
+        if (!plan.ok) { rows.push({ w, sym: k.sym, ok: false, why: plan.why }); continue; }
+        rows.push({ w, sym: k.sym, ok: true, score: s.score - plan.be, s, plan, F, k });
+      }
+      A.scan = { at, rows: rows.slice().sort((a, b) => (b.ok - a.ok) || ((b.score || 0) - (a.score || 0))).slice(0, 8).map(r => [r.w.m, r.sym, r.ok ? 1 : 0, r.ok ? +r.score.toFixed(3) : r.why]) };
+      const ok = rows.filter(r => r.ok).sort((a, b) => b.score - a.score);
+      if (!ok.length || !(ok[0].plan.stake >= P.risk.minStake)) return;
+      const best = ok[0], k = best.k, p = k.last;
+      const thesis = { setup: label, why: best.s.why, decidedAt: at, horizonS: P.horizonS, stopPx: best.plan.stopPx, stopNote: best.plan.stopNote,
+        riskBudget: P.risk.riskBudget, worstLoss: +best.plan.worstLoss.toFixed(4), lossAtStop: +best.plan.lossAtStop.toFixed(4), breakEven: +best.plan.be.toFixed(4), roundTrip: +best.plan.rt.toFixed(4),
+        impact: +best.plan.impact.toFixed(4), size: best.plan.stake, notes: best.plan.notes, invalidation: best.s.invalidation, features: FEAT.brief(best.F),
+        social: k.social ? k.social.status : 'unavailable', score: +best.score.toFixed(4),
+        alternatives: rows.filter(r => r !== best).slice(0, 6).map(r => [r.sym, r.ok ? 'ranked lower (' + r.score.toFixed(3) + ')' : r.why]) };
+      ctx.buy(A, { m: k.m, stake: best.plan.stake, sigAt: p.at, sigPx: p.sol, maxPx: p.sol * (1 + P.slip), maxImpact: P.maxImpactQuote, why: best.s.why, thesis,
+        snap: { usd: p.usd, sol: p.sol, mc: p.mc, obsAt: p.at, stage: k.stage, eligibleAt: best.w.from, cross: k.cross.at } }, at);
+    },
+    onFail(ctx, A, o, why, at) { if (o.side === 'buy') A.cool[o.m] = at + P.coolFailS; },
+    onFill(ctx, A, pos) {
+      const th = pos.thesis || {};
+      pos.rules = { stopPx: th.stopPx || null, horizonS: P.horizonS, trailFrom: P.trailFrom, trail: P.trail, riskBudget: P.risk.riskBudget };
+      if (th.stopNote) pos.flags.push(th.stopNote);
+      for (const w of A.watch) if (w.m === pos.m && !w.done) { w.done = 'bought'; w.doneAt = pos.quoteAt; }
+    },
+    review(ctx, A, pos, at) {
+      const k = ctx.coin(pos.m), r = pos.rules;
+      if (!k) return { exit: true, reason: 'emergency', why: 'coin data lost' };
+      if (pos.state === 'exit_unavailable') return { exit: true, reason: 'emergency', why: 'no sell route: trying again' };
+      const F = FEAT.features(k, at, ctx, pos);
+      const em = FEAT.emergency(k, pos, F);
+      if (em) return { exit: true, reason: 'emergency', why: em };
+      if (r.stopPx && k.last && !ctx.blocked(k, at) && k.last.sol <= r.stopPx) return { exit: true, reason: 'stop', why: 'protective level hit' };
+      if (pos.mark && pos.mark.v != null && pos.cost - pos.mark.v > r.riskBudget * 1.25) return { exit: true, reason: 'risk', why: `loss ${(pos.cost - pos.mark.v).toFixed(3)} SOL is past the risk budget` };
+      const fam = FEAT.families(F, k, pos), bad = fam.filter(f => f.v === 'bad');
+      pos.fam = fam.map(f => [f.f, f.v, f.why]);
+      if (bad.length >= 2) {
+        if (!pos.badSince) pos.badSince = at;
+        ctx.setState(A, pos, 'broken', bad.map(f => f.f + ': ' + f.why).join('; '), at);
+        if (at - pos.badSince >= P.persistS) return { exit: true, reason: 'thesis', why: 'thesis broken: ' + bad.map(f => f.why).join('; ') };
+      } else {
+        pos.badSince = null;
+        if (pos.state !== 'exit_pending') ctx.setState(A, pos, bad.length ? 'watching' : 'healthy', bad.length ? bad[0].f + ': ' + bad[0].why : 'evidence still supports it', at);
+      }
+      if (pos.mfe >= r.trailFrom && pos.mark && pos.mark.v != null && pos.peakV && pos.mark.v <= pos.peakV * (1 - r.trail))
+        return { exit: true, reason: 'trail', why: `gave back ${(r.trail * 100).toFixed(0)}% from its best mark after ${pct(pos.mfe)}` };
+      if (at - pos.fillAt >= r.horizonS) return { exit: true, reason: 'time', why: `${Math.round(r.horizonS / 60)} min horizon` };
+      return null;
+    },
+    onClose(ctx, A, tr, at) { A.cool[tr.m] = at + (tr.net < 0 ? P.coolLossS : P.coolWinS); },
+    interest() { return []; },
+  };
+}
+function v2All() { return ['A', 'B', 'C'].map(V2); }
+module.exports = { E0, HOLD, e0All, E0_LOCKED, E0_SLIP, V2, v2All, V2_LOCKED, SPECS, BASE };

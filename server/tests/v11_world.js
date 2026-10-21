@@ -26,7 +26,8 @@ class World {
     this.solEvery = 30;
     this.down = [];                      // [from, to): the server is not running
     this.quotes = [];                    // answered quotes
-    this.feed = true;                    // price observations on/off
+    this.feed = true;                    // price observations on/off (or a function of time)
+    this.solOn = true;                   // SOL/USD ticker on/off (or a function of time)
     this.evId = 0;
   }
   coin(o) {
@@ -52,13 +53,17 @@ class World {
     const created = tCross - 300;
     return this.coin({ name: c.name, sym: c.sym + 'X', created, price: t => t < tCross - 10 ? 3000 : 8000 });
   }
-  jupEvent(c, extra) {
-    return Object.assign({ type: 'jup', m: c.m, sym: c.sym, name: c.name, dec: 6, audit: Object.assign({}, c.audit), holders: c.holders, org: c.org,
-      claims: { tw: null, web: null, tg: null }, s5: { bv: 900, sv: 600, nb: 40, ns: 22, nt: 37 }, s1h: null, bad: [] }, extra || {});
+  /* Jupiter token snapshot at time t: audit (c.audit may change over time), 5-minute stats from c.stats(t) */
+  jupEvent(c, extra, t) {
+    t = t != null ? t : this.t;
+    const audit = typeof c.audit === 'function' ? c.audit(t) : c.audit, mc = c.price(t);
+    const s5 = c.stats ? c.stats(t) : { bv: 900, sv: 600, nb: 40, ns: 22, nt: 37, nnb: 10, hc: 2 };
+    return Object.assign({ type: 'jup', m: c.m, sym: c.sym, name: c.name, dec: 6, audit: Object.assign({}, audit), holders: c.holders, org: c.org, usd: mc / 1e9, mc,
+      claims: c.claims || { tw: null, web: null, tg: null }, s5, s1h: null, srcAt: t - 2, bad: [] }, extra || {});
   }
   rcEvent(c) { return { type: 'rc', m: c.m, score: 1, sn: 1, risks: c.danger.map(d => [d, 'danger']), danger: c.danger.slice() }; }
   /* the checks of coin c arrive at tAudit and tRc */
-  checks(c, tAudit, tRc) { this.at(tAudit, this.jupEvent(c)); this.at(tRc != null ? tRc : tAudit, this.rcEvent(c)); return this; }
+  checks(c, tAudit, tRc) { this.at(tAudit, this.jupEvent(c, null, tAudit)); this.at(tRc != null ? tRc : tAudit, this.rcEvent(c)); return this; }
   quoteFor(r, t) {
     const out = r.outMint === SOL_MINT ? r.inMint : r.outMint, c = this.coins.get(out);
     const base = { type: 'quote', inMint: r.inMint, outMint: r.outMint, amount: r.amount };
@@ -84,8 +89,11 @@ class World {
       wasDown = down;
       if (down) { this.q = this.q.filter(x => x.at >= t + 1 || (x.ev.type !== 'quote')); continue; }   // in-flight quotes die with the process
       if (t === this.t0) E.ingest({ type: 'run_start', at: t, run: 'r0' });
-      if ((t - this.t0) % this.solEvery === 0) E.ingest({ type: 'sol', at: t, req: t - 0.2, px: SOLUSD });
-      if (this.feed && (t - this.t0) % this.obsEvery === 0) for (const c of this.coins.values()) { if (t < c.created) continue; const ev = this.pxEvent(c, t); if (ev) E.ingest(Object.assign({ at: t, req: t - 0.2 }, ev)); }
+      const on = f => typeof f === 'function' ? f(t) : f;
+      if (on(this.solOn) && (t - this.t0) % this.solEvery === 0) E.ingest({ type: 'sol', at: t, req: t - 0.2, px: SOLUSD });
+      if (on(this.feed) && (t - this.t0) % this.obsEvery === 0) for (const c of this.coins.values()) { if (t < c.created) continue; const ev = this.pxEvent(c, t); if (ev) E.ingest(Object.assign({ at: t, req: t - 0.2 }, ev)); }
+      // the runtime's Jupiter snapshots of the coins v11 watches or holds, every 20 s
+      if ((t - this.t0) % 20 === 10 && this.snaps !== false) { const a = E.active(t); for (const m of [...a.hot, ...a.warm]) { const c = this.coins.get(m); if (c && t >= c.created) E.ingest(Object.assign({ at: t, req: t - 0.4 }, this.jupEvent(c, null, t))); } }
       const due = this.q.filter(x => x.at <= t).sort((a, b) => a.at - b.at);
       this.q = this.q.filter(x => x.at > t);
       for (const x of due) E.ingest(x.ev);

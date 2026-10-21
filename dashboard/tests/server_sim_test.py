@@ -120,7 +120,35 @@ def main():
     late = [q for q in rq if q["due"] < o["now"] - 900]
     print(f"research: {len(recs)} records in {len(glob.glob(f'{DIR}/research/**/*.gz', recursive=True))} files, {bad} differ from the market, {len(rq)} still queued ({len(late)} overdue > 15 min), duplicates {len(recs) - len(seen)}")
     print("ALL BOTS MATCH" if ok else "SOME BOTS DIFFER")
+    v11ok = check_v11(mk, J, o)
+    print("V11 OK" if v11ok else "V11 PROBLEMS")
     srv.shutdown()
+
+
+def check_v11(mk, J, o):
+    """v11 ran beside the legacy bots: its state must satisfy the invariants (every trade justified by data received before
+    its decision, nothing booked inside the outage, books add up), and every E0 account is compared with its legacy bot."""
+    f = f"{DIR}/v11.json"
+    if not os.path.exists(f):
+        print("v11: no v11.json saved"); return False
+    r = json.loads(subprocess.check_output(["node", os.path.join(REPO, "server", "v11", "check.js"), f]))
+    sym = {c.mint: c.sym for c in mk.coins}
+    print(f"v11: status {r['status']['state']} {r['status']['why']}  counts {r['n']}  duplicates {r['dup']}  runtime {o.get('v11')}")
+    for g in r["gaps"]:
+        print(f"   gap {g['from'] - T0:+.0f} s .. {g['to'] - T0:+.0f} s ({g['why']}): {g['cancelled']} orders cancelled, {g['open']} positions open, hypothetical {g['hypo']}")
+    for A in r["accts"]:
+        leg = J["bots"].get(A["id"][3:]) if A["id"].startswith("E0-") else None
+        ltxt = f" | legacy {len(leg['trades'])} trades, {10 + sum(t['net'] for t in leg['trades']):.3f} SOL realized" if leg else ""
+        print(f"   {A['id']:<7} trades {A['trades']:>3} wins {A['wins']:>3} realized {10 + A['realized']:7.3f} SOL  open {(A['open'] or {}).get('sym', '-'):<8} signals {A['n']['signals']:>3} orders {A['n']['orders']:>3} fails {A['n']['fails']:>3} mdd {A['mdd'] * 100:6.2f}%{ltxt}")
+        for t in A["list"][:6]:
+            print(f"      {sym.get(t['m'], '?'):<8} signal {t['sigAt'] - T0:+8.1f}  quote {t['quoteAt'] - T0:+8.1f}  exit {t['exitQuoteAt'] - T0:+8.1f} {t['reason']:<5} net {t['net']:+.4f}  slip {t['slip'] * 100:5.1f}%  mae {t['mae'] * 100:6.1f}%")
+    if r["violations"]:
+        print("   VIOLATIONS:"); [print("     ", v) for v in r["violations"][:20]]
+    if r["errors"]:
+        print("   last errors:", [e[1][:90] for e in r["errors"]])
+    sizes = o.get("sizes", {})
+    print(f"   v11.json max {sizes.get('v11', 0)} bytes, page view max {sizes.get('v11view', 0)} bytes")
+    return not r["violations"] and r["n"]["cross"] > 0
 
 
 if __name__ == "__main__":

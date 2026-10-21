@@ -15,6 +15,21 @@ GRAD_MC = 410.9 * SOL_USD  # bonding curve completes here
 FLOOR_MC = 30 / 1.073e9 * 1e9 * SOL_USD  # launch price x supply: the lowest market cap on the curve
 
 
+SOL_MINT = "So11111111111111111111111111111111111111112"
+CURVE_K = 30 * 1.073e9          # pump.fun bonding curve: virtual SOL x virtual tokens
+POOL_K = 85 * 206.9e6           # PumpSwap pool right after graduation
+Q_TIERS = [(420, 0.0125), (1470, 0.012), (2460, 0.0115), (3440, 0.011), (4420, 0.0105), (9820, 0.01)]
+
+
+def q_fee(mc_sol, pool):
+    if not pool:
+        return 0.0125
+    for lim, f in Q_TIERS:
+        if mc_sol < lim:
+            return f
+    return 0.0095
+
+
 def b58(rng, n, suffix=""):
     return "".join(rng.choice(B58) for _ in range(n - len(suffix))) + suffix
 
@@ -153,8 +168,21 @@ class Market:
              "twitter": c.socials.get("tw"), "website": c.socials.get("web"), "telegram": c.socials.get("tg"), "dev": "Dev" + c.mint[:8]}
         if full:
             d["holderCount"] = c.holders
-            d["stats5m"] = {"numBuys": 40, "numSells": 22, "numTraders": 37}
+            d["stats5m"] = self.stats5m(c, now)
         return d
+
+    def stats5m(self, c, now):
+        """Jupiter's rolling 5-minute stats, made up from the price path: rising -> buyers' notional dominates."""
+        p1, p0 = c.price(now), c.price(max(c.created, now - 300))
+        if not p1 or not p0:
+            return {"numBuys": 0, "numSells": 0, "numTraders": 0}
+        m = (int(now) // 60) * 60
+        vol = sum(c.cs[t][4] for t in range(m - 300, m, 60) if t in c.cs) or 1.0
+        r = p1 / p0 - 1
+        share = min(0.9, max(0.1, 0.5 + 1.5 * r))
+        nt = int(vol / 60) + 5
+        return {"buyVolume": round(vol * share, 2), "sellVolume": round(vol * (1 - share), 2), "numBuys": int(nt * share * 1.4), "numSells": int(nt * (1 - share) * 1.4),
+                "numTraders": nt, "numNetBuyers": int((share - 0.5) * nt), "holderChange": int((share - 0.5) * nt), "priceChange": round(r * 100, 3)}
 
     def dex_pairs(self, c, now):
         out = []
@@ -207,6 +235,34 @@ class Market:
                 "risks": [{"name": n, "value": "", "description": n, "score": 5000, "level": lv} for n, lv in c.risks],
                 "score": 1 + 5000 * len(c.risks), "score_normalised": min(100, 1 + 20 * len(c.risks)), "lpLockedPct": 0}
 
+    def quote(self, q, now):
+        """Jupiter swap quote for an exact size: constant-product math on the coin's curve (or PumpSwap pool after
+        graduation) at the price at `now`, venue fee inside outAmount, like the real endpoint. 400 when there is no route."""
+        inm, outm, amt = q.get("inputMint", [""])[0], q.get("outputMint", [""])[0], int(q.get("amount", ["0"])[0] or 0)
+        mint = outm if inm == SOL_MINT else inm
+        c = self.by_mint(mint)
+        if not c or now < c.created + 5 or amt <= 0:
+            return 400, {"error": "Could not find any route", "errorCode": "COULD_NOT_FIND_ANY_ROUTE"}
+        p = c.price(now) / SOL_USD
+        pool = c.on_pool(now)
+        k = POOL_K if pool else CURVE_K
+        R = math.sqrt(k * p)
+        T = R / p
+        f = q_fee(p * SUPPLY, pool)
+        if inm == SOL_MINT:
+            net = amt / 1e9 * (1 - f)
+            tok = T - k / (R + net)
+            out, impact = int(tok * 1e6), (net / tok) / p - 1
+        else:
+            Q = amt / 1e6
+            g = R - k / (T + Q)
+            out, impact = int(g * (1 - f) * 1e9), 1 - (g / Q) / p
+        label = "Pump.fun Amm" if pool else "Pump.fun"
+        return 200, {"inputMint": inm, "inAmount": str(amt), "outputMint": outm, "outAmount": str(out), "otherAmountThreshold": str(int(out * 0.9)),
+                     "swapMode": "ExactIn", "slippageBps": 1000, "priceImpactPct": f"{impact:.8f}",
+                     "routePlan": [{"swapInfo": {"ammKey": c.pool if pool else c.bc, "label": label, "inputMint": inm, "outputMint": outm, "inAmount": str(amt), "outAmount": str(out), "feeAmount": "0", "feeMint": SOL_MINT}, "percent": 100}],
+                     "contextSlot": int(now * 2.5), "timeTaken": 0.002}
+
     def handle(self, url, now):
         """Return (status, json) for a mocked API URL at time now, or None if not mocked."""
         u = urlparse(url)
@@ -215,6 +271,8 @@ class Market:
         key = host + re.sub(r"/[1-9A-HJ-NP-Za-km-z]{32,44}(pump)?", "/{id}", path)
         self.calls[key] = self.calls.get(key, 0) + 1
         if host == "lite-api.jup.ag":
+            if path.endswith("/swap/v1/quote"):
+                return self.quote(q, now)
             if path.endswith("/recent"):
                 fresh = [c for c in self.coins if now - 45 <= c.created <= now]
                 fresh.sort(key=lambda c: -c.created)

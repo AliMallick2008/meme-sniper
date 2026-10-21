@@ -14,6 +14,7 @@
    Paper only: a quote is a price for an exact size; nothing is ever signed or sent. */
 const MODEL = require('./model.js');
 const G = require('./gates.js');
+const SOCIAL = require('./social.js');
 const { SOL_MINT } = require('./parse.js');
 
 const DEF = {
@@ -34,8 +35,9 @@ const DEF = {
   solStaleS: 600,        // no SOL/USD for this long halts entries
   exitRetryS: 15,        // wait after a failed exit before trying again
   routeLostAfter: 2,     // consecutive failed sell quotes = exit unavailable
-  crossMc: 7000, followS: 75 * 60, keepObsS: 1800, keepCoinS: 6 * 3600, memeWinS: 7200,
-  eqFineS: 6 * 3600, eqCoarseS: 900, decKeep: 400, errKeep: 60,
+  crossMc: 7000, followS: 75 * 60, keepObsS: 1800, keepCoinS: 3 * 3600, memeWinS: 7200,
+  eqFineS: 6 * 3600, eqCoarseS: 900, decKeep: 200, errKeep: 60, keepTrades: 150,
+  social: { source: null },   // no approved X / Telegram source connected: attention is 'unavailable', never 'none'
 };
 
 function create(opts = {}) {
@@ -45,6 +47,8 @@ function create(opts = {}) {
   const S = opts.state && opts.state.v === 1 ? opts.state : fresh();
   const pre = new Map();               // young coins under $7K (memory only; a new run re-learns them)
   const seen = new Set(S.seen);
+  // saved states drop the second copy of an audit or report that was never re-checked
+  for (const k of Object.values(S.coins)) { if (!k.auditLast) k.auditLast = k.audit; if (!k.rcLast) k.rcLast = k.rc; }
   let outLog = [];
   for (const s of STRATS) if (!S.accts[s.id]) S.accts[s.id] = newAcct(s);
 
@@ -91,7 +95,7 @@ function create(opts = {}) {
   function newCoin(p, at) {
     return { m: p.m, sym: p.sym || '', name: p.name || '', t0: p.t0 || null, first: p.first || at, quote: p.quote || null, bc: p.bc || null, pool: p.pool || null,
       words: G.words(p.name, p.sym), cross: null, stage: 'curve', stageAt: at, last: p.last || null, hi: p.hi || 0, hiAt: p.hiAt || null, chi: 0,
-      obs: [], bars: [], bar: null, flow: [], snaps: [], cs: {}, audit: null, auditLast: null, rc: null, rcLast: null, dec: 6,
+      obs: p.obs || [], bars: p.bars || [], bar: p.bar || null, flow: p.flow || [], snaps: [], cs: {}, audit: null, auditLast: null, rc: null, rcLast: null, dec: 6,
       g0: null, gs: null, meme: null, sq: null, sqFails: 0, invalid: null, claims: null, used: 0 };
   }
   function coinPx(k, pairs, at) {
@@ -109,7 +113,10 @@ function create(opts = {}) {
       k.obs.push([at, main.usd, sol]); while (k.obs.length && k.obs[0][0] < at - C.keepObsS) k.obs.shift();
       k.flow.push([at, main.b5, main.s5, main.v5, main.liq ? main.liq.usd : null]); while (k.flow.length && k.flow[0][0] < at - C.keepObsS) k.flow.shift();
       barAdd(k, at, main.usd);
-      const stage = ps ? 'pool' : (sol && MODEL.curveProgress(sol * MODEL.SUPPLY) >= 0.995 ? 'migrating' : 'curve');
+      // pool once a PumpSwap pair (or a pool route) is seen, and it stays so; migrating = the curve is complete (or nearly,
+      // and a quote found no route) with no pool confirmed yet
+      const prog = sol ? MODEL.curveProgress(sol * MODEL.SUPPLY) : 0;
+      const stage = ps || k.stage === 'pool' ? 'pool' : prog >= 0.999 || (k.stage === 'migrating' && prog >= 0.98) ? 'migrating' : 'curve';
       if (stage !== k.stage) { log('stage', { m: k.m, from: k.stage, to: stage }); k.stage = stage; k.stageAt = at; }
       const cl = pairs.map(p => p.claims).find(Boolean);
       if (cl) k.claims = { at, socials: cl.socials, webs: cl.webs };
@@ -152,6 +159,7 @@ function create(opts = {}) {
   // ------------------------------------------------------------------ gates
   function evalGates(k, at) {
     if (!k.cross) return;
+    k.social = SOCIAL.assess(k, at, C.social);
     if (!k.g0 && k.audit && k.rc) {   // the legacy rule sets decide once, when both first checks are in
       k.meme = G.memeScore(k.words, S.crosses, k.cross.at, k.m, C.memeWinS);
       const decidedAt = Math.max(k.audit.at, k.rc.at);
@@ -230,6 +238,9 @@ function create(opts = {}) {
         k.sqFails = 0;
       } else if (!ev.retry) { k.sqFails++; k.sqFailAt = at; k.sqWhy = ev.why; }
     }
+    if (k && !ev.ok && !ev.retry && k.stage === 'curve' && k.last && k.last.sol && MODEL.curveProgress(k.last.sol * MODEL.SUPPLY) >= 0.98) {
+      log('stage', { m: k.m, from: 'curve', to: 'migrating', via: 'no route at the end of the curve' }); k.stage = 'migrating'; k.stageAt = at;
+    }
     for (const o of Object.values(S.orders)) {
       if (o.key !== key || !(ev.req >= o.at)) continue;   // only a quote requested after the decision can fill it
       if (!ev.ok) { if (!ev.retry) fail(o, at, ev.why); continue; }
@@ -290,8 +301,10 @@ function create(opts = {}) {
     const p = k && k.last && at - k.last.at <= C.pxFreshS && !k.invalid && k.last.sol ? k.last : null;
     let v = null, src = 'u', why = '';
     const sq = k && k.sq;
-    if (k && k.stage === 'migrating' && !(sq && sq.at > k.stageAt)) why = 'graduating';
-    else if (sq && sq.amount === pos.raw && at - sq.at <= C.quoteDirectS) { v = sq.out * (1 - C.latency) - fixed; src = 'q'; }
+    if (k && k.stage === 'migrating') {   // only a successful quote newer than the migration and the last failed one prices it
+      if (sq && sq.at > Math.max(k.stageAt, k.sqFailAt || 0) && sq.amount === pos.raw && at - sq.at <= C.quoteDirectS) { v = sq.out * (1 - C.latency) - fixed; src = 'q'; }
+      else why = 'graduating';
+    } else if (sq && sq.amount === pos.raw && at - sq.at <= C.quoteDirectS) { v = sq.out * (1 - C.latency) - fixed; src = 'q'; }
     else if (p) {
       v = MODEL.sellOut(pos.qty, p.sol, k.stage === 'pool' ? 'pool' : 'curve', liqOf(k), at).sol * (1 - C.latency);
       if (sq && sq.cal && at - sq.at <= C.quoteFreshS) { v *= sq.cal; src = 'c'; } else src = 'm';
@@ -323,19 +336,19 @@ function create(opts = {}) {
     A.eq.push([t, r6(e.eq), r6(e.lo), e.src]);
     if (e.src !== 'u') { A.peak = Math.max(A.peak, e.eq); A.mdd = Math.min(A.mdd, e.eq / A.peak - 1); }
     A.peakLo = Math.max(A.peakLo, e.lo); A.mddLo = Math.min(A.mddLo, e.lo / A.peakLo - 1);
-    // older than eqFineS: one row per eqCoarseS (the bucket's lowest equity, so drawdowns survive the compaction)
-    const cut = t - C.eqFineS;
-    if (A.eq.length > 2 && A.eq[0][0] < cut - C.eqCoarseS) {
-      const old = [], keep = [];
-      for (const r of A.eq) (r[0] < cut ? old : keep).push(r);
-      const out = [];
-      for (const r of old) {
-        const b = Math.floor(r[0] / C.eqCoarseS) * C.eqCoarseS, last = out[out.length - 1];
-        if (last && last[0] === b) { if (r[1] < last[1]) last[1] = r[1]; if (r[2] < last[2]) last[2] = r[2]; if (r[3] === 'u') last[3] = 'u'; }
-        else out.push([b, r[1], r[2], r[3]]);
-      }
-      A.eq = out.concat(keep);
+    // older than eqFineS: one row per 15 min; older than 3 days: one per hour (each the bucket's lowest equity, so
+    // drawdowns survive the compaction)
+    if (t % 900 === 0) { A.eq = compactRows(A.eq, t - 3 * 86400, 3600); A.eq = compactRows(A.eq, t - C.eqFineS, C.eqCoarseS); }
+  }
+  function compactRows(rows, cut, bucket) {
+    const out = [];
+    for (const r of rows) {
+      if (r[0] >= cut) { out.push(r); continue; }
+      const b = Math.floor(r[0] / bucket) * bucket, last = out[out.length - 1];
+      if (last && last[0] === b) { if (r[1] < last[1]) last[1] = r[1]; if (r[2] < last[2]) last[2] = r[2]; if (r[3] === 'u') last[3] = 'u'; }
+      else out.push([b, r[1], r[2], r[3]]);
     }
+    return out;
   }
 
   // ------------------------------------------------------------------ coverage gaps and hypotheticals
@@ -413,17 +426,17 @@ function create(opts = {}) {
         for (const s of STRATS) { const A = S.accts[s.id]; if (A.start == null) { A.start = ev.at; A.eqT = 0; dec(A.id, 'start', `${s.label} starts with ${C.startSol} paper SOL`, null); } }
         break;
       }
-      case 'coin': if (!S.coins[ev.m] && !pre.has(ev.m) && ev.t0 && at - ev.t0 < C.followS) pre.set(ev.m, { m: ev.m, sym: ev.sym, name: ev.name, t0: ev.t0, first: at, hi: 0 }); break;
+      case 'coin': if (!S.coins[ev.m] && !pre.has(ev.m) && ev.t0 && at - ev.t0 < C.followS) pre.set(ev.m, preCoin(ev, ev.t0, at)); break;
       case 'px': {
         let k = S.coins[ev.m], p = k ? null : pre.get(ev.m);
         const pf = ev.pairs.find(x => x.dex === 'pumpfun');
         if (!k && !p) {   // a young coin first seen through prices (a run restarted while the legacy bots followed it)
           const t0 = pf && pf.created ? pf.created : null;
           if (!pf || !t0 || at - t0 > C.followS) break;
-          p = { m: ev.m, sym: pf.sym || '', name: pf.name || '', t0, first: at, hi: 0 }; pre.set(ev.m, p);
+          p = preCoin(pf, t0, at); p.m = ev.m; pre.set(ev.m, p);
         }
         S.lastPxAt = at;
-        if (k) { k.used = at; coinPx(k, ev.pairs, at); if (k.invalid) err(`schema dexscreener ${k.sym}: ${k.invalid.why}`); break; }
+        if (k) { k.used = at; coinPx(k, ev.pairs, at); if (k.invalid) err(`field dexscreener ${k.sym}: ${k.invalid.why}`); break; }
         if (!coinPx(p, ev.pairs, at)) break;
         if (p.t0 && at - p.t0 > C.followS) { pre.delete(ev.m); break; }
         if (p.quote === 'SOL' && p.bc && p.last.mc >= C.crossMc) { const k2 = promote(p, at, p.last.mc); coinPx(k2, ev.pairs, at); }
@@ -436,7 +449,7 @@ function create(opts = {}) {
         if (ev.sym && !k.sym) k.sym = ev.sym;
         if (ev.dec != null && ev.dec >= 0 && ev.dec <= 12) k.dec = ev.dec;
         const a = Object.assign({ at, req: ev.req }, ev.audit, { holders: ev.holders, org: ev.org, soc: { tw: !!ev.claims.tw, web: !!ev.claims.web, tg: !!ev.claims.tg }, bad: ev.bad && ev.bad.length ? ev.bad : undefined });
-        if (ev.bad && ev.bad.some(b => /^audit/.test(b))) { k.invalid = { at, why: 'audit fields: ' + ev.bad.join(', '), src: 'jup' }; err(`schema jupiter ${k.sym}: ${ev.bad.join(', ')}`); }
+        if (ev.bad && ev.bad.some(b => /^audit/.test(b))) { k.invalid = { at, why: 'audit fields: ' + ev.bad.join(', '), src: 'jup' }; err(`field jupiter ${k.sym}: ${ev.bad.join(', ')}`); }
         else if (k.invalid && k.invalid.src === 'jup') k.invalid = null;
         if (!k.audit) { k.audit = a; log('audit', { m: k.m, src: 'jupiter', req: ev.req, at, audit: ev.audit, holders: ev.holders, bad: ev.bad }); }
         k.auditLast = a;
@@ -456,7 +469,7 @@ function create(opts = {}) {
         break;
       }
       case 'quote': onQuote(ev, at); break;
-      case 'sol': S.sol = { px: ev.px, at }; S.solT.push([at, ev.px]); while (S.solT.length > 400) S.solT.shift(); break;
+      case 'sol': S.sol = { px: ev.px, at }; S.solT.push([at, ev.px]); while (S.solT.length > 150) S.solT.shift(); break;
       case 'solc': for (const [t, px] of ev.rows) if (t + 60 <= at) S.solM[t] = px; pruneSol(at); break;
       case 'candles': {
         const k = Object.values(S.coins).find(c => c.bc === ev.pool || c.pool === ev.pool);
@@ -468,11 +481,13 @@ function create(opts = {}) {
         break;
       }
       case 'schema': err(`schema ${ev.src}: ${ev.why}`); break;
-      case 'social': if (opts.onSocial) opts.onSocial(ctx, ev, at); break;
+      case 'social': { const k = S.coins[ev.m]; if (k) { SOCIAL.ingest(k, ev, at, C.social); log('social', { m: k.m, src: ev.src, id: ev.id, status: k.social.status }); } break; }
       default: break;
     }
     evaluate(at);
   }
+  /* a young coin under $7K: its recent price history is kept (in memory) so momentum is known the moment it crosses */
+  function preCoin(x, t0, at) { return { m: x.m, sym: x.sym || '', name: x.name || '', t0, first: at, hi: 0, obs: [], flow: [], bars: [], bar: null, stage: 'curve', stageAt: at }; }
   function pruneSol(at) { for (const t of Object.keys(S.solM)) if (+t < at - 6 * 3600) delete S.solM[t]; }
   /* Once a second from the runtime: clocks, expiries, marks, the ledger, and decisions that depend on time alone. */
   function tick(at) {
@@ -508,7 +523,11 @@ function create(opts = {}) {
     for (const [m, p] of pre) if (at - (p.t0 || p.first) > C.followS) pre.delete(m);
     S.crosses = S.crosses.filter(c => at - c[0] < C.memeWinS + 600);
     for (const [k, q] of Object.entries(S.q)) if (q.done && at - q.done > 120 && !Object.values(S.orders).some(o => o.key === k)) delete S.q[k];
-    for (const A of Object.values(S.accts)) A.watch = A.watch.filter(w => !w.done || at - (w.doneAt || w.to) < 6 * 3600);
+    for (const A of Object.values(S.accts)) {
+      A.watch = A.watch.filter(w => !w.done || at - (w.doneAt || w.to) < 6 * 3600);
+      // old trades keep their numbers; their full records are in the event log
+      for (let i = 0; i < A.trades.length - C.keepTrades; i++) { const t = A.trades[i]; if (t.states) { delete t.states; delete t.snap; delete t.thesis; delete t.exitRoute; t.rules = null; } }
+    }
   }
 
   // ------------------------------------------------------------------ what the runtime should fetch
