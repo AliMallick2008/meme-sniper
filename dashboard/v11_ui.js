@@ -44,6 +44,8 @@ const V11_UI = (() => {
         <p class="v11-note">Decisions use only data the server had received at that moment, buys and sells fill only at the next real Jupiter quote, and time the server was not running is never credited. Unknown safety data counts as unknown, never as safe. Paper money only.</p></div>
       <div class="panel"><div class="ph"><div><h2>Strategies</h2><p>Every account started with 10 paper SOL. Value counts an open position at what it would sell for now; the worst case is in brackets. Small samples prove nothing: no winner badges.</p></div></div>
         <div class="tablewrap" id="v11Accts"></div></div>
+      <div class="panel"><div class="ph"><div><h2>Profit by day</h2><p>The goal is a bot that makes money every day. Each cell is the change in the account's value over that Toronto day, open positions marked at what they would sell for.</p></div></div>
+        <div class="tablewrap" id="v11Days"></div></div>
       <div class="panel"><div class="ph"><div><h2>Balance over time</h2><p>Marked every 2 minutes, open positions included. Dotted: the legacy rules under honest timing (E0).</p></div></div>
         <div class="chart" id="v11Eq" style="height:260px"></div><div class="legend" id="v11EqLegend" style="margin-top:8px"></div></div>
       <div class="panel"><div class="ph"><div><h2>Open positions</h2><p>Why each one was bought, whether that reason still holds, and what would make it sell.</p></div></div><div id="v11Pos"></div></div>
@@ -67,7 +69,7 @@ const V11_UI = (() => {
     $('v11Pill').textContent = st.pill; $('v11Pill').className = 'pill ' + st.kind;
     $('v11Line').innerHTML = esc(st.line) + (st.why ? `<br><b class="down">${esc(st.why)}</b>` : '');
     if (!S) return;
-    renderAccts(); renderEquity(); renderPos(); renderTrades(); renderFunnel(); renderGaps(); renderDossier();
+    renderAccts(); renderDays(); renderEquity(); renderPos(); renderTrades(); renderFunnel(); renderGaps(); renderDossier();
   }
   const group = A => A.kind === 'v2' ? 0 : A.kind === 'hold' ? 1 : 2;
   function renderAccts() {
@@ -172,6 +174,25 @@ const V11_UI = (() => {
     }
     return `<div class="v11-detail"><h3>${esc(t.acctName)}: ${esc(t.sym)} <span class="faint mono">${esc(t.m)}</span> <button class="v11-link" data-dossier="${esc(t.m)}">Dossier</button></h3>
       <dl class="v11-dl">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join('')}</dl></div>`;
+  }
+  // value change per Toronto day from the equity points (start of day = last value before it, else 10 SOL at the start)
+  const DAYF = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }), DAYL = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' });
+  function daysOf(A) {
+    const out = new Map(); let prev = 10;
+    for (const [t, v] of A.eq) { if (v == null) continue; const d = DAYF.format(new Date(t)); if (!out.has(d)) out.set(d, { open: prev, close: v, t }); else out.get(d).close = v; prev = v; }
+    if (A.value != null) { const d = DAYF.format(new Date()); if (!out.has(d)) out.set(d, { open: prev, close: A.value, t: Date.now() }); else out.get(d).close = A.value; }
+    return out;
+  }
+  function renderDays() {
+    const rows = S.accts.slice().sort((a, b) => group(a) - group(b)).map(A => ({ A, d: daysOf(A) }));
+    const days = [...new Set(rows.flatMap(r => [...r.d.keys()]))].sort().slice(-7);
+    if (!days.length) { $('v11Days').innerHTML = '<p class="faint">No full day yet.</p>'; return; }
+    const today = DAYF.format(new Date());
+    $('v11Days').innerHTML = `<table><thead><tr><th>Account</th>${days.map(d => `<th class="n">${esc(DAYL.format(new Date(d + 'T12:00:00')))}${d === today ? ' (so far)' : ''}</th>`).join('')}<th class="n">Green days</th></tr></thead><tbody>${rows.map(({ A, d }) => {
+      let green = 0, n = 0;
+      const cells = days.map(day => { const x = d.get(day); if (!x) return '<td class="n faint">–</td>'; const ch = x.close - x.open; if (day !== today) { n++; if (ch > 1e-9) green++; } return `<td class="n ${cls(ch)}">${sSol(ch)}</td>`; }).join('');
+      return `<tr><td style="box-shadow: inset 3px 0 0 var(${COLOR[A.id] || '--line'})">${esc(A.id)}</td>${cells}<td class="n">${n ? `${green}/${n}` : '–'}</td></tr>`;
+    }).join('')}</tbody></table><p class="faint v11-foot">"Green days" counts finished days only; an account's first day is partial (it started mid-day).</p>`;
   }
   function renderFunnel() {
     const v2 = S.accts.filter(A => A.kind === 'v2');

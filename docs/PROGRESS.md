@@ -61,3 +61,8 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   hold a coin the live run had stopped following (74% of its model fills found no recent price). The runtime now records
   every crossed coin for 3 hours (coins the engine dropped every 2 minutes, recording only), and the ablation fills on the
   last price up to 150 s old, counting fills on prices older than 30 s per account.
+- Oct 21 ~5:00 PM ET: exact replay verified across all four live handovers of the day (16:27, 20:15 with the 11.0 to 11.1
+  upgrade, 20:30 with the E0 rev 2 restart, 20:46), each stretch with its own commit. v2.1 study pre-registered in
+  research/v2_protocol.md section 5 (5 days of 11.1 data, one-change grid, 60/40 split, pick and judge rules); research-
+  only switches added (inert in v2.0). v11 tab: "Profit by day" table (the owner's goal: green days).
+  Scheduled check-ins: Oct 22 03:05 UTC (overnight health + replay), then ~13:00 UTC (morning summary).
