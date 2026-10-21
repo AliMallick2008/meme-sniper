@@ -11,7 +11,9 @@ const clock = { t: T0 * 1000, timers: [], seq: 0, inflight: 0 };
 clock.now = () => clock.t;
 clock.sleep = ms => new Promise(res => clock.timers.push({ at: clock.t + Math.max(0, ms || 0), seq: clock.seq++, res }));
 const agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
-function bridge(url) {
+// every call takes 150 ms of virtual time, like a real network round trip
+async function bridge(url) { const r = await bridgeNow(url); await clock.sleep(150); return r; }
+function bridgeNow(url) {
   clock.inflight++;
   const body = JSON.stringify({ url, now: clock.t / 1000 });
   return new Promise((res, rej) => {
@@ -31,10 +33,11 @@ const store = {
     const state = rd('state.json'); if (!state) return null;
     const tc = {}, td = path.join(DIR, 'tc');
     if (fs.existsSync(td)) for (const f of fs.readdirSync(td)) tc[f.replace(/\.json$/, '')] = rd('tc/' + f);
-    return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc };
+    return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc, extra: { 'v11.json': rd('v11.json') } };
   },
-  async save({ state, young, rq, tc }) {
+  async save({ state, young, rq, tc, extra }) {
     const s = [JSON.stringify(state), JSON.stringify(young), JSON.stringify(rq)];
+    for (const [f, obj] of Object.entries(extra || {})) if (obj) { const x = JSON.stringify(obj); fs.writeFileSync(path.join(DIR, f), x); sizes[f] = Math.max(sizes[f] || 0, x.length); }
     fs.mkdirSync(path.join(DIR, 'tc'), { recursive: true });
     fs.writeFileSync(path.join(DIR, 'state.json'), s[0]); fs.writeFileSync(path.join(DIR, 'young.json'), s[1]); fs.writeFileSync(path.join(DIR, 'rq.json'), s[2]);
     for (const [m, v] of Object.entries(tc || {})) fs.writeFileSync(path.join(DIR, 'tc', m + '.json'), JSON.stringify(v));
@@ -62,7 +65,7 @@ const logs = [];
     nx.res();
   }
   const J = out ? out.core.J() : null;
-  fs.writeFileSync(path.join(DIR, `sim_out_${RUN}.json`), JSON.stringify({ now: clock.t / 1000, J, research: out && out.research.stats(), lanes: out && Object.fromEntries(Object.entries(out.core.LANES).map(([k, L]) => [k, [L.ok, L.fail, L.limited, L.lastErr]])), errors: out && out.core.M.errors, sizes, pops, logs }));
+  fs.writeFileSync(path.join(DIR, `sim_out_${RUN}.json`), JSON.stringify({ now: clock.t / 1000, J, research: out && out.research.stats(), v11: rd('v11.json'), lanes: out && Object.fromEntries(Object.entries(out.core.LANES).map(([k, L]) => [k, [L.ok, L.fail, L.limited, L.lastErr]])), errors: out && out.core.M.errors, sizes, pops, logs }));
   if (err) { console.error(String(err && err.stack || err)); process.exit(1); }
   console.log(logs.slice(-3).join('\n'));
   process.exit(0);

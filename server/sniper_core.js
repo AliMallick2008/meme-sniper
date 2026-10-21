@@ -25,7 +25,7 @@ const SNIPER_CORE = (() => {
   function create(env) {
     const H = Object.assign({ leader: () => true, stillLeader: () => true, save() {}, dirty() {}, toast() {}, liveBar() {}, visible: () => false,
       gapText: a => `The bots were offline for ${a}. Coins they held or watched are caught up from their 1-minute candles; launches in that time were not scanned.`,
-      onDecide: null, gtIdle: null }, env);
+      onDecide: null, gtIdle: null, onCross: null, onAudit: null, onRugcheck: null }, env);
     const nowMs = () => env.now();
     const nowS = () => env.now() / 1000;
     const sleep = ms => env.sleep(ms);
@@ -33,7 +33,8 @@ const SNIPER_CORE = (() => {
 
     // -------------------------------------------------------------- rate-limited requests, one lane per API
     // GeckoTerminal's free API allows about 10 calls a minute per IP, so its lane adapts: slower after a 429, faster after successes.
-    const LANES = { jup: { gap: 1300, name: 'Jupiter' }, dex: { gap: 260, name: 'DexScreener' }, gt: { gap: 7500, min: 7500, max: 20000, name: 'GeckoTerminal' }, rc: { gap: 2100, name: 'RugCheck' }, cb: { gap: 350, name: 'Coinbase' } };
+    // keyless Jupiter allows 30 calls a minute for tokens and quotes together, so its lane is spaced 2 s
+    const LANES = { jup: { gap: 2000, name: 'Jupiter' }, dex: { gap: 260, name: 'DexScreener' }, gt: { gap: 7500, min: 7500, max: 20000, name: 'GeckoTerminal' }, rc: { gap: 2100, name: 'RugCheck' }, cb: { gap: 350, name: 'Coinbase' } };
     for (const L of Object.values(LANES)) Object.assign(L, { next: 0, q: Promise.resolve(), ok: 0, fail: 0, lastErr: '', lastOk: 0, lastFail: 0, run: 0, limited: 0 });
     function getJSON(lane, url) {
       const L = LANES[lane];
@@ -177,6 +178,7 @@ const SNIPER_CORE = (() => {
       J.cross.push([t, c.m, k.words]);
       M.crossed++; J.n.cross++;
       M.checkQ.push(c.m); M.rcQ.push(c.m);
+      if (H.onCross) { try { H.onCross(k, c, t); } catch (e) { note('onCross: ' + (e.message || e)); } }
       H.dirty();
     }
     // a cold start fills the meme history from Jupiter's 1-hour lists: pump.fun coins under 2 h old already above $7k
@@ -201,6 +203,7 @@ const SNIPER_CORE = (() => {
         if (!H.leader() || !M.checkQ.length) { await sleep(2000); continue; }
         const batch = M.checkQ.splice(0, 40).filter(m => J.coins[m] && J.coins[m].status === 'checking');
         if (!batch.length) continue;
+        const reqAt = nowMs();
         try {
           const j = await getJSON('jup', `${API.jup}/search?query=${batch.join(',')}`);
           const got = new Set();
@@ -210,8 +213,9 @@ const SNIPER_CORE = (() => {
             k.soc = { tw: !!x.twitter, web: !!x.website, tg: !!x.telegram };
             k.s5 = x.stats5m ? { b: x.stats5m.numBuys, s: x.stats5m.numSells, tr: x.stats5m.numTraders } : null;
             decide(k);
+            if (H.onAudit) { try { H.onAudit(k, reqAt, nowMs(), false); } catch (e) { note('onAudit: ' + (e.message || e)); } }
           }
-          for (const m of batch) if (!got.has(m)) { const k = J.coins[m]; if (!k) continue; if (++k.tries < 4) M.checkQ.push(m); else { k.audit = { missing: true }; decide(k); } }
+          for (const m of batch) if (!got.has(m)) { const k = J.coins[m]; if (!k) continue; if (++k.tries < 4) M.checkQ.push(m); else { k.audit = { missing: true }; decide(k); if (H.onAudit) { try { H.onAudit(k, reqAt, nowMs(), true); } catch (e) { /* hook only */ } } } }
         } catch (e) { M.checkQ.unshift(...batch); await sleep(5000); }
       }
     }
@@ -220,11 +224,13 @@ const SNIPER_CORE = (() => {
         const m = H.leader() && M.rcQ.shift();
         if (!m) { await sleep(2000); continue; }
         const k = J.coins[m]; if (!k || k.rc) continue;
+        const reqAt = nowMs();
+        const rcHook = () => { if (H.onRugcheck) { try { H.onRugcheck(k, reqAt, nowMs()); } catch (e) { note('onRugcheck: ' + (e.message || e)); } } };
         try {
           const j = await getJSON('rc', `${API.rc}/tokens/${m}/report/summary`);
           k.rc = j ? { score: j.score, sn: j.score_normalised, risks: (Array.isArray(j.risks) ? j.risks : []).slice(0, 20).map(r => [String(r.name || ''), String(r.level || ''), String(r.value || '').slice(0, 40)]) } : { missing: true, risks: [] };
-          decide(k);
-        } catch (e) { k.rcTries = (k.rcTries || 0) + 1; if (k.rcTries < 4) { M.rcQ.push(m); await sleep(3000); } else { k.rc = { missing: true, risks: [] }; decide(k); } }
+          decide(k); rcHook();
+        } catch (e) { k.rcTries = (k.rcTries || 0) + 1; if (k.rcTries < 4) { M.rcQ.push(m); await sleep(3000); } else { k.rc = { missing: true, risks: [] }; decide(k); rcHook(); } }
       }
     }
     function checksOf(k, C) {

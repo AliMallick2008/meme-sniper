@@ -154,6 +154,16 @@ class Market:
         if full:
             d["holderCount"] = c.holders
             d["stats5m"] = {"numBuys": 40, "numSells": 22, "numTraders": 37}
+            # v11 fields: 5-minute buy/sell notional that follows the price trend, liquidity, data time
+            p5 = c.price(max(c.created, now - 300)) or px
+            pc = px / p5 - 1 if p5 else 0
+            vol = sum(c.cs[m][4] for m in c.cs if now - 300 <= m < now) or 100.0
+            share = 0.5 + max(-0.35, min(0.35, pc))
+            d["stats5m"].update({"buyVolume": vol * share, "sellVolume": vol * (1 - share), "numNetBuyers": int(round((share - 0.5) * 30)),
+                                 "numOrganicBuyers": int(vol / 200), "holderChange": pc * 20, "priceChange": pc * 100})
+            d["stats1h"] = {"buyVolume": vol * 6, "sellVolume": vol * 6, "numTraders": 120, "numNetBuyers": 4}
+            d["liquidity"] = px * SUPPLY * 0.3
+            d["updatedAt"] = iso(now)
         return d
 
     def dex_pairs(self, c, now):
@@ -202,6 +212,32 @@ class Market:
         return {"data": {"id": "x", "type": "ohlcv_request_response", "attributes": {"ohlcv_list": [r for r in reversed(rows)]}},
                 "meta": {"base": {"name": c.name, "symbol": c.sym, "address": c.mint}, "quote": {"symbol": "SOL"}}}
 
+    def quote(self, q, now):
+        """Jupiter swap/v1/quote: exact constant-product fill on the coin's venue at the current price."""
+        SOL = "So11111111111111111111111111111111111111112"
+        i, o, amt = q.get("inputMint", [""])[0], q.get("outputMint", [""])[0], int(q.get("amount", ["0"])[0])
+        c = self.by_mint(o if i == SOL else i)
+        if not c or c.created > now or amt <= 0:
+            return 400, {"error": "Could not find any route", "errorCode": "COULD_NOT_FIND_ANY_ROUTE"}
+        curve = not c.on_pool(now)
+        p = c.price(now) / SOL_USD
+        k = 30 * 1.073e9 if curve else 85 * 206.9e6
+        R = math.sqrt(k * p); T = R / p
+        fee = 0.0125 if curve else 0.012
+        if i == SOL:
+            net = amt / 1e9 * (1 - fee)
+            out = (T - R * T / (R + net)) * 1e6
+            spot = net / p * 1e6
+        else:
+            Q = amt / 1e6
+            g = R - R * T / (T + Q)
+            out = g * (1 - fee) * 1e9
+            spot = Q * p * (1 - fee) * 1e9
+        return 200, {"inputMint": i, "outputMint": o, "inAmount": str(amt), "outAmount": str(int(out)), "otherAmountThreshold": str(int(out * 0.9)),
+                     "swapMode": "ExactIn", "slippageBps": 1000, "priceImpactPct": str(max(0.0, 1 - out / spot)),
+                     "routePlan": [{"swapInfo": {"ammKey": c.bc if curve else c.pool, "label": "Pump.fun" if curve else "Pump.fun Amm"}, "percent": 100}],
+                     "contextSlot": int(now)}
+
     def rugcheck(self, c):
         return {"tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "tokenType": "",
                 "risks": [{"name": n, "value": "", "description": n, "score": 5000, "level": lv} for n, lv in c.risks],
@@ -222,6 +258,8 @@ class Market:
             if path.endswith("/search"):
                 ids = q.get("query", [""])[0].split(",")
                 return 200, [self.jup_token(c, now, True) for c in (self.by_mint(i) for i in ids) if c and c.created <= now]
+            if path.endswith("/swap/v1/quote"):
+                return self.quote(q, now)
             if "/toptraded/" in path or "/toptrending/" in path or "/toporganicscore/" in path:
                 return 200, []
             return 404, {"error": "not found"}

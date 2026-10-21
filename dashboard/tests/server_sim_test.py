@@ -120,7 +120,72 @@ def main():
     late = [q for q in rq if q["due"] < o["now"] - 900]
     print(f"research: {len(recs)} records in {len(glob.glob(f'{DIR}/research/**/*.gz', recursive=True))} files, {bad} differ from the market, {len(rq)} still queued ({len(late)} overdue > 15 min), duplicates {len(recs) - len(seen)}")
     print("ALL BOTS MATCH" if ok else "SOME BOTS DIFFER")
+    sym = {m: k.get("sym") for m, k in J["coins"].items()}
+    for f in glob.glob(f"{DIR}/research/**/*.gz", recursive=True):
+        for l in gzip.open(f, "rt").read().splitlines():
+            if l.strip():
+                r = json.loads(l); sym.setdefault(r["m"], r.get("sym"))
+    ok11 = v11_checks(DIR, o, J, sym)
+    print("V11 CAUSAL CHECKS OK" if ok11 else "V11 CAUSAL CHECKS FAILED")
     srv.shutdown()
+
+
+def v11_checks(DIR, o, J, sym):
+    """The v11 engine ran beside the legacy bots: check its causal invariants on the full event stream and reconcile
+    the E0 accounts (legacy rules, honest timing) with the legacy bots trade by trade."""
+    v = o.get("v11")
+    if not v:
+        print("v11: no state saved"); return False
+    evs = []
+    for f in sorted(glob.glob(f"{DIR}/v11-events/**/*.gz", recursive=True)):
+        evs += [json.loads(l) for l in gzip.open(f, "rt").read().splitlines() if l.strip()]
+    seen = {(e["type"], e.get("id"), e["at"]) for e in evs}
+    evs += [e for e in v["log"] if (e["type"], e.get("id"), e["at"]) not in seen]
+    evs.sort(key=lambda e: e["at"])
+    elig = {}
+    for e in evs:
+        if e["type"] == "EligibilityDecided" and e.get("pass"):
+            elig[(e["acct"], e["m"])] = e["eligibleAt"]
+    gaps = [(e["from"], e["to"]) for e in evs if e["type"] == "CoverageGap"]
+    reqs = {e["id"]: e for e in evs if e["type"] == "OrderRequested"}
+    bad = []
+    for e in evs:
+        if e["type"] == "OrderRequested" and e["side"] == "buy":
+            ea = elig.get((e["acct"], e["m"]))
+            if ea is None or e["at"] < ea:
+                bad.append(("buy before eligible", e["acct"], sym.get(e["m"]), e["at"], ea))
+        if e["type"] in ("OrderFilled", "PositionClosed"):
+            if any(a < e["at"] < b for a, b in gaps):
+                bad.append(("fill inside a coverage gap", e.get("acct"), e["at"]))
+        if e["type"] == "OrderFilled":
+            r = reqs.get(e["id"])
+            if not r or e["at"] <= r["at"]:
+                bad.append(("fill not after its decision", e["id"]))
+    for gfrom, gto in gaps:
+        print(f"   coverage gap {(gfrom / 1000 - T0):+.0f} s .. {(gto / 1000 - T0):+.0f} s ({(gto - gfrom) / 60000:.1f} min): nothing credited inside")
+    print(f"v11 events: {len(evs)}; eligibility decisions {sum(1 for e in evs if e['type'] == 'EligibilityDecided')}, orders {len(reqs)}, "
+          f"fills {sum(1 for e in evs if e['type'] == 'OrderFilled')}, failed {sum(1 for e in evs if e['type'] == 'OrderFailed')}, closed {sum(1 for e in evs if e['type'] == 'PositionClosed')}")
+    for x in bad[:10]:
+        print("   VIOLATION", x)
+    # reconciliation: legacy bot vs its E0 twin
+    print("   legacy (candle replay) vs E0 (live, causal) per bot:")
+    for bid, B in J["bots"].items():
+        A = v["accts"].get("E0-" + bid)
+        if not A:
+            continue
+        lt = {(t["m"]): t for t in B["trades"]}
+        et = {(t["m"]): t for t in A["trades"]}
+        both = set(lt) & set(et)
+        lnet, enet = sum(t["net"] for t in B["trades"]), sum(t["net"] for t in A["trades"])
+        print(f"   {bid:<4} legacy {len(B['trades']):>2} trades {lnet:+.3f} SOL | E0 {len(A['trades']):>2} trades {enet:+.3f} SOL"
+              f"{' + open ' + str(sym.get(A['pos']['m'])) if A.get('pos') else ''} | same coin {len(both)}, legacy only {len(set(lt) - set(et))}, E0 only {len(set(et) - set(lt))}")
+        for m in sorted(both, key=lambda m: lt[m]["entryT"])[:4]:
+            a, b = lt[m], et[m]
+            print(f"        {str(sym.get(m)):<8} legacy in {a['entryT'] - T0:+6.0f} s out {a['exitT'] - T0:+6.0f} s {a['out']:<4} {a['net']:+.3f} | "
+                  f"E0 decided {b['decidedAt'] / 1000 - T0:+6.0f} s filled {b['openAt'] / 1000 - T0:+6.0f} s out {b['closeAt'] / 1000 - T0:+6.0f} s {b['exitReason']:<4} {b['net']:+.3f}")
+    sz = o.get("sizes", {})
+    print("   saved sizes:", {k: v for k, v in sz.items()})
+    return not bad
 
 
 if __name__ == "__main__":

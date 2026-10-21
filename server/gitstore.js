@@ -38,11 +38,12 @@ function makeStore({ repo, token, dir, branch = 'data', log = () => {} }) {
       if (!state || !state.J || !state.J.bots) throw new Error(`state.json on the ${BRANCH} branch is missing or broken`);
       const tc = {}, td = path.join(DIR, 'tc');
       if (fs.existsSync(td)) for (const f of fs.readdirSync(td)) { const v = rd('tc/' + f); if (v && Array.isArray(v.r)) { const m = f.replace(/\.json$/, ''); tc[m] = v; written.set(m, v.u); } }
-      return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc };
+      return { state, young: rd('young.json') || [], rq: rd('rq.json') || [], tc, extra: { 'v11.json': rd('v11.json') } };
     },
     // one commit with no history each time (force-pushed), so the branch never grows
-    async save({ state, young, rq, tc }) {
+    async save({ state, young, rq, tc, extra }) {
       const files = [['state.json', JSON.stringify(state)], ['young.json', JSON.stringify(young)], ['rq.json', JSON.stringify(rq)]];
+      for (const [f, obj] of Object.entries(extra || {})) if (obj) files.push([f, JSON.stringify(obj)]);
       const tcs = Object.entries(tc || {}).filter(([m, v]) => written.get(m) !== v.u).map(([m, v]) => [m, v.u, JSON.stringify(v)]);
       const keep = new Set(Object.keys(tc || {}));
       for (const [f, s] of files) fs.writeFileSync(path.join(DIR, f), s);
