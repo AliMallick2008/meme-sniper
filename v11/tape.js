@@ -167,7 +167,10 @@ function createTape(opts) {
       stats.lastClose = { at: now(), code: code || null, reason, afterMs: now() - openedAt };
       const was = wsUp; wsUp = false; ws = null; subs.clear(); bySub.clear(); pendingReq.clear(); stats.subs = 0;
       if (was) status(false, `disconnected (code ${code || '?'}${reason ? ': ' + reason : ''})`);
-      scheduleRetry();
+      // a connection that lived 5 s or more is replaced at once (the public RPC drops them every 10-20 s at busy hours);
+      // one that failed sooner waits for the backoff
+      if (was && stats.lastClose.afterMs >= 5000 && !closing) { stats.reconnects++; backoff = 0; retryAt = now(); connect(); }
+      else scheduleRetry();
     };
   }
   function scheduleRetry(why) {
