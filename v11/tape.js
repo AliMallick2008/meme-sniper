@@ -22,7 +22,7 @@ const crypto = require('crypto');
 
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 const RPC_URL = 'https://api.mainnet-beta.solana.com';
-const TAPE_MAX = 40;                 // logs subscriptions on the one connection (the busiest coins first)
+const TAPE_MAX = 40;                 // curves followed (held and ordering coins first), on each connection
 const VIRT_TOKENS = 279.9e6;         // virtual-only tokens on every curve seen (vTok - rTok, 99 of 99 coins)
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -73,42 +73,84 @@ const short = w => (w ? String(w).slice(0, 8) : null);
      ingest(ev)       records the event and feeds it to the engine (runtime.js)
      log(text)
      fetch(url, init) HTTP (global fetch); WS: WebSocket constructor (global in Node 22); url: RPC base URL
-   Returns { want(list of { m, bc }), poll(), maintain(), start(L, plan), stats, stop() }. Nothing throws out of it. */
+     conns            parallel connections with the same subscriptions (default CONNS)
+   Returns { want(list of { m, bc }), poll(), maintain(), start(L, plan), stats, stop() }. Nothing throws out of it.
+
+   Two connections: at busy hours the public RPC drops each websocket about every 10 s (code 1006, no reason; runner
+   probes on Oct 22 2026: 14 drops in 180 s per connection, the same with or without client traffic), and not at all at
+   other times. Both connections carry the same subscriptions; a trade arriving on both is passed on once (by transaction
+   signature and curve). The engine sees the union: the tape is up while either connection is, and a coin is subscribed
+   while either has it, so a single drop changes nothing downstream. */
+const CONNS = 2;
+const SEEN_MAX = 20000;
 function createTape(opts) {
   const now = opts.now, log = opts.log || (() => {}), ingest = opts.ingest;
   const url = opts.url || RPC_URL, WSImpl = opts.WS || (typeof WebSocket === 'function' ? WebSocket : null), fetchImpl = opts.fetch || (typeof fetch === 'function' ? fetch : null);
-  const stats = { up: false, subs: 0, trades: 0, failedTx: 0, decodeMiss: 0, curves: 0, polls: 0, pollFails: 0, reconnects: 0, lastMsgAt: null, lastTradeAt: null, subErrors: 0, creatorMismatch: 0 };
-  let ws = null, wsUp = false, backoff = 0, reqId = 0, closing = false, retryAt = 0, openedAt = 0, lastSentAt = 0;
-  const keepaliveMs = opts.keepaliveMs || 0;   // send a tiny request this often (0: never)
+  const stats = { up: false, subs: 0, trades: 0, dupes: 0, failedTx: 0, decodeMiss: 0, curves: 0, polls: 0, pollFails: 0, reconnects: 0, drops: 0, lastMsgAt: null, lastTradeAt: null, subErrors: 0, lastClose: null, conns: [] };
+  let reqId = 0, closing = false, unionUp = false;
   const desired = new Map();     // bc -> { m, bc, mintBytes }
-  const subs = new Map();        // bc -> { id (request), sub (subscription id) }
-  const bySub = new Map();       // subscription id -> bc
-  const pendingReq = new Map();  // request id -> { bc, kind: 'sub' | 'unsub' }
+  const onCoins = new Map();     // m -> connections with a confirmed subscription for it (the union the engine sees)
   const last = new Map();        // m -> { slot, vs, vt } (the newest state sent to the engine)
   const crSent = new Set();      // coins whose creator was sent this run
+  const seen = new Map();        // signature|curve -> 1, newest last (a trade that came on both connections)
+  const C = Array.from({ length: opts.conns || CONNS }, (_, k) => ({ k, ws: null, up: false, backoff: 0, retryAt: 0, openedAt: 0, lastMsgAt: null,
+    subs: new Map() /* bc -> { id, sub } */, bySub: new Map(), pending: new Map() /* request id -> { bc, kind } */, drops: 0 }));
+  let started = false;
 
-  const status = (up, why) => { if (stats.up === up && !why) return; stats.up = up; ingest({ type: 'tape_status', at: now(), up, subs: subs.size, why: why || null }); };
-  function send(o) { try { if (ws && wsUp) { ws.send(JSON.stringify(o)); lastSentAt = now(); return true; } } catch (e) { /* the close handler reconnects */ } return false; }
-  function subscribe(bc) {
-    if (subs.has(bc)) return;
-    const id = ++reqId; pendingReq.set(id, { bc, kind: 'sub' }); subs.set(bc, { id, sub: null });
-    if (!send({ jsonrpc: '2.0', id, method: 'logsSubscribe', params: [{ mentions: [bc] }, { commitment: 'processed' }] })) { subs.delete(bc); pendingReq.delete(id); }
+  function union(why) {
+    const up = C.some(c => c.up);
+    stats.up = up; stats.subs = onCoins.size;
+    stats.conns = C.map(c => ({ up: c.up, subs: c.subs.size, drops: c.drops }));
+    if (up === unionUp) return;
+    unionUp = up;
+    if (!up) onCoins.clear();      // every subscription ended with the last connection (the engine clears them too)
+    ingest({ type: 'tape_status', at: now(), up, subs: onCoins.size, why: why || null });
   }
-  function unsubscribe(bc, m) {
-    const s = subs.get(bc); if (!s) return;
-    subs.delete(bc);
-    if (s.sub != null && m) ingest({ type: 'tape_sub', at: now(), m, on: false });
-    if (s.sub != null) { bySub.delete(s.sub); const id = ++reqId; pendingReq.set(id, { bc, kind: 'unsub' }); send({ jsonrpc: '2.0', id, method: 'logsUnsubscribe', params: [s.sub] }); }
+  function coinOn(m) {
+    const n = (onCoins.get(m) || 0) + 1; onCoins.set(m, n);
+    // the engine trusts the coin's tape only after a curve state received from now on: the next poll sends one even if
+    // nothing changed
+    if (n === 1) { last.delete(m); pollSoon = true; ingest({ type: 'tape_sub', at: now(), m, on: true }); }
+  }
+  function coinOff(m) {
+    const n = (onCoins.get(m) || 0) - 1;
+    if (n > 0) { onCoins.set(m, n); return; }
+    if (!onCoins.has(m)) return;
+    onCoins.delete(m);
+    if (C.some(c => c.up)) ingest({ type: 'tape_sub', at: now(), m, on: false });   // (all down: tape_status says it)
+  }
+  function send(c, o) { try { if (c.ws && c.up) { c.ws.send(JSON.stringify(o)); return true; } } catch (e) { /* the close handler reconnects */ } return false; }
+  function subscribe(c, bc) {
+    if (c.subs.has(bc)) return;
+    const id = ++reqId; c.pending.set(id, { bc, kind: 'sub' }); c.subs.set(bc, { id, sub: null });
+    if (!send(c, { jsonrpc: '2.0', id, method: 'logsSubscribe', params: [{ mentions: [bc] }, { commitment: 'processed' }] })) { c.subs.delete(bc); c.pending.delete(id); }
+  }
+  function unsubscribe(c, bc, m) {
+    const s = c.subs.get(bc); if (!s) return;
+    c.subs.delete(bc);
+    if (s.sub != null) { c.bySub.delete(s.sub); const id = ++reqId; c.pending.set(id, { bc, kind: 'unsub' }); send(c, { jsonrpc: '2.0', id, method: 'logsUnsubscribe', params: [s.sub] }); coinOff(m); }
+  }
+  // a connection is gone: its confirmed subscriptions end (a coin stays on while the other connection has it)
+  function lost(c) {
+    const coins = [];
+    for (const [bc, s] of c.subs) if (s.sub != null) { const d = desired.get(bc); if (d) coins.push(d.m); }
+    c.up = false; c.ws = null; c.subs.clear(); c.bySub.clear(); c.pending.clear();
+    if (C.some(x => x.up)) for (const m of coins) coinOff(m);
   }
   function newer(m, slot, vs, vt) {
     const p = last.get(m);
     if (p && (slot < p.slot || (p.vs === vs && p.vt === vt))) return false;
     last.set(m, { slot, vs, vt }); return true;
   }
-  function onLogs(p) {
-    const bc = bySub.get(p.subscription), d = bc && desired.get(bc); if (!d) return;
+  function onLogs(c, p) {
+    const bc = c.bySub.get(p.subscription), d = bc && desired.get(bc); if (!d) return;
     const v = p.result && p.result.value, slot = p.result && p.result.context ? p.result.context.slot : null;
     if (!v) return;
+    const key = (v.signature || '') + '|' + bc;
+    if (v.signature) {
+      if (seen.has(key)) { stats.dupes++; return; }
+      seen.set(key, 1); if (seen.size > SEEN_MAX) seen.delete(seen.keys().next().value);
+    }
     if (v.err) { stats.failedTx++; return; }
     const at = now();
     for (const l of v.logs || []) {
@@ -124,79 +166,75 @@ function createTape(opts) {
         continue;
       }
       if (decodeComplete(buf, d.mintBytes)) ingest({ type: 'curve', at, m: d.m, slot, done: true, src: 'event' });
-      else if (buf.length >= 8 && buf.subarray(0, 8).equals(D_TRADE)) stats.decodeMiss++;
+      else if (buf.length >= 8 && buf.subarray(0, 8).equals(D_TRADE)) stats.decodeMiss++;   // usually another coin's trade in the same transaction
     }
   }
-  function connect() {
+  function connect(c) {
     if (!WSImpl || closing) return;
-    try { ws = new WSImpl(url.replace(/^http/, 'ws')); openedAt = now(); } catch (e) { ws = null; scheduleRetry('websocket: ' + (e.message || e)); return; }
-    const me = ws;
-    me.onopen = () => {
-      if (me !== ws) return;
-      wsUp = true; backoff = 0; subs.clear(); bySub.clear(); pendingReq.clear();
-      for (const bc of desired.keys()) subscribe(bc);
-      status(true, 'connected');
+    let ws;
+    try { ws = new WSImpl(url.replace(/^http/, 'ws')); } catch (e) { scheduleRetry(c, 'websocket: ' + (e.message || e)); return; }
+    c.ws = ws; c.openedAt = now(); c.up = false;
+    ws.onopen = () => {
+      if (ws !== c.ws) return;
+      c.up = true; c.backoff = 0; c.subs.clear(); c.bySub.clear(); c.pending.clear();
+      for (const bc of desired.keys()) subscribe(c, bc);
+      union('connected');
     };
-    me.onmessage = ev => {
-      if (me !== ws) return;
-      stats.lastMsgAt = now();
+    ws.onmessage = ev => {
+      if (ws !== c.ws) return;
+      c.lastMsgAt = stats.lastMsgAt = now();
       let j; try { j = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data)); } catch (e) { return; }
       try {
-        if (j.id != null && pendingReq.has(j.id)) {
-          const r = pendingReq.get(j.id); pendingReq.delete(j.id);
+        if (j.id != null && c.pending.has(j.id)) {
+          const r = c.pending.get(j.id); c.pending.delete(j.id);
           if (r.kind === 'sub') {
-            const s = subs.get(r.bc);
-            if (j.error) { stats.subErrors++; subs.delete(r.bc); }
-            else if (s && s.id === j.id) {
-              s.sub = j.result; bySub.set(j.result, r.bc);
-              // the engine trusts the coin's tape only after a curve state received from now on: the next poll sends one
-              // even if nothing changed
-              const d = desired.get(r.bc); if (d) { last.delete(d.m); pollSoon = true; ingest({ type: 'tape_sub', at: now(), m: d.m, on: true }); }
-            }
-            else send({ jsonrpc: '2.0', id: ++reqId, method: 'logsUnsubscribe', params: [j.result] });   // no longer wanted
+            const s = c.subs.get(r.bc), d = desired.get(r.bc);
+            if (j.error) { stats.subErrors++; c.subs.delete(r.bc); }
+            else if (s && s.id === j.id && d) { s.sub = j.result; c.bySub.set(j.result, r.bc); coinOn(d.m); }
+            else send(c, { jsonrpc: '2.0', id: ++reqId, method: 'logsUnsubscribe', params: [j.result] });   // no longer wanted
           }
-          stats.subs = subs.size;
+          union();
           return;
         }
-        if (j.method === 'logsNotification' && j.params) onLogs(j.params);
+        if (j.method === 'logsNotification' && j.params) onLogs(c, j.params);
       } catch (e) { /* a bad message never stops the lane */ }
     };
-    me.onerror = () => {};
-    me.onclose = e => {
-      if (me !== ws) return;
+    ws.onerror = () => {};
+    ws.onclose = e => {
+      if (ws !== c.ws) return;
       const code = e && e.code, reason = e && e.reason ? String(e.reason).slice(0, 80) : '';
-      stats.lastClose = { at: now(), code: code || null, reason, afterMs: now() - openedAt };
-      const was = wsUp; wsUp = false; ws = null; subs.clear(); bySub.clear(); pendingReq.clear(); stats.subs = 0;
-      if (was) status(false, `disconnected (code ${code || '?'}${reason ? ': ' + reason : ''})`);
-      // a connection that lived 5 s or more is replaced at once (the public RPC drops them every 10-20 s at busy hours);
-      // one that failed sooner waits for the backoff
-      if (was && stats.lastClose.afterMs >= 5000 && !closing) { stats.reconnects++; backoff = 0; retryAt = now(); connect(); }
-      else scheduleRetry();
+      const was = c.up, afterMs = now() - c.openedAt;
+      stats.lastClose = { at: now(), conn: c.k, code: code || null, reason, afterMs };
+      lost(c);
+      if (was) { c.drops++; stats.drops++; }
+      union(`disconnected (code ${code || '?'}${reason ? ': ' + reason : ''})`);
+      // a connection that lived 5 s or more is replaced at once; one that failed sooner waits for the backoff
+      if (was && afterMs >= 5000 && !closing) { stats.reconnects++; c.backoff = 0; c.retryAt = now(); connect(c); }
+      else scheduleRetry(c);
     };
   }
-  function scheduleRetry(why) {
+  function scheduleRetry(c, why) {
     if (closing) return;
     stats.reconnects++;
-    // the public RPC drops idle-or-not connections every 10-20 s at busy hours (code 1006, Oct 22 2026 probe), so the first
-    // retry is quick; repeated failures back off to 30 s
-    backoff = Math.min(30000, backoff ? backoff * 2 : 500);
-    retryAt = now() + backoff;
+    c.backoff = Math.min(30000, c.backoff ? c.backoff * 2 : 500);
+    c.retryAt = now() + c.backoff;
     if (why) log('tape: ' + why);
   }
-  // a socket that never opened within 20 s, or went silent for 5 minutes while following busy coins, is replaced
-  function watchdog() {
-    if (!ws) return;
-    const t = now(), silent = wsUp && subs.size > 0 && stats.lastMsgAt != null && t - stats.lastMsgAt > 300000;
-    if ((!wsUp && t - openedAt > 20000) || silent) {
-      const old = ws; ws = null; const was = wsUp; wsUp = false; subs.clear(); bySub.clear(); pendingReq.clear(); stats.subs = 0;
+  // a socket that never opened within 20 s, or went silent for 5 minutes while following coins, is replaced
+  function watchdog(c) {
+    if (!c.ws) return;
+    const t = now(), silent = c.up && c.subs.size > 0 && c.lastMsgAt != null && t - c.lastMsgAt > 300000;
+    if ((!c.up && t - c.openedAt > 20000) || silent) {
+      const old = c.ws, was = c.up;
+      lost(c);
       try { old.close(); } catch (e) { /* closing */ }
-      if (was) status(false, silent ? 'silent for 5 minutes' : 'disconnected');
-      scheduleRetry(silent ? 'websocket silent, reconnecting' : 'websocket did not open');
+      if (was) { c.drops++; stats.drops++; }
+      union(silent ? 'silent for 5 minutes' : 'disconnected');
+      scheduleRetry(c, silent ? 'websocket silent, reconnecting' : 'websocket did not open');
     }
   }
   // the coins to follow: [{ m, bc }] in priority order (engine.tapePlan); at most TAPE_MAX
   function want(list) {
-    watchdog();
     const next = new Map();
     for (const x of list || []) {
       if (next.size >= TAPE_MAX) break;
@@ -205,19 +243,23 @@ function createTape(opts) {
       if (!mb) continue;
       next.set(x.bc, { m: x.m, bc: x.bc, mintBytes: mb });
     }
-    for (const [bc, d] of [...desired.entries()]) if (!next.has(bc)) { desired.delete(bc); unsubscribe(bc, d.m); }
-    for (const [bc, d] of next) if (!desired.has(bc)) { desired.set(bc, d); if (wsUp) subscribe(bc); }
+    for (const [bc, d] of [...desired.entries()]) if (!next.has(bc)) { for (const c of C) unsubscribe(c, bc, d.m); desired.delete(bc); }
+    for (const [bc, d] of next) if (!desired.has(bc)) { desired.set(bc, d); for (const c of C) if (c.up) subscribe(c, bc); }
     for (const m of [...last.keys()]) if (![...desired.values()].some(d => d.m === m)) last.delete(m);
     maintain();
   }
-  // replace a dead socket, reconnect when the backoff allows (called every second and from want)
+  // replace dead sockets and reconnect when the backoff allows (called every second and from want); the second
+  // connection starts 5 s after the first, so their drops do not line up
   function maintain() {
-    watchdog();
-    if (keepaliveMs && wsUp && now() - lastSentAt >= keepaliveMs) send({ jsonrpc: '2.0', id: ++reqId, method: 'getHealth' });
-    if (!ws && !closing && desired.size && now() >= retryAt) connect();
+    if (!started && desired.size) { started = true; C.forEach((c, k) => { c.retryAt = now() + k * 5000; }); }
+    for (const c of C) {
+      watchdog(c);
+      if (!c.ws && !closing && desired.size && now() >= c.retryAt) connect(c);
+    }
+    union();
   }
-  // the same curves over HTTP every 2 s (at once after a (re)subscription): fills any gap in the logs, keeps the exact
-  // curve state fresh while the socket is down, and reports completion
+  // the same curves over HTTP every 2 s (at once after a coin's subscription): fills any gap in the logs, keeps the
+  // exact curve state fresh, and reports completion
   let polling = false, lastPollAt = -Infinity, pollSoon = false;
   const doneSent = new Set();
   async function poll() {
@@ -259,8 +301,8 @@ function createTape(opts) {
     L(async () => { want(plan()); }, 3000, 'v11-tape');
     L(async () => { maintain(); await poll(); }, 1000, 'v11-curve');
   }
-  function stop() { closing = true; try { if (ws) ws.close(); } catch (e) { /* closing */ } }
+  function stop() { closing = true; for (const c of C) { try { if (c.ws) c.ws.close(); } catch (e) { /* closing */ } } }
   return { want, poll, maintain, start, stop, stats, desired };
 }
 
-module.exports = { createTape, decodeTrade, decodeComplete, decodeCurve, b58, unb58, PUMP, RPC_URL, TAPE_MAX, VIRT_TOKENS, D_TRADE, D_COMPLETE };
+module.exports = { createTape, decodeTrade, decodeComplete, decodeCurve, b58, unb58, PUMP, RPC_URL, TAPE_MAX, CONNS, VIRT_TOKENS, D_TRADE, D_COMPLETE };

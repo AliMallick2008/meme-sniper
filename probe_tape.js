@@ -2,7 +2,7 @@
 /* Probe 5 (read-only): the real tape module (server/v11/tape.js) against the public RPC for RUN_S seconds on the
    busiest curves of the moment, with the real recorder to measure the recording volume. Paper only. */
 const T = require('./v11/tape.js'), REC = require('./v11/record.js');
-const RUN_S = +(process.env.RUN_S || 150), N = +(process.env.NCOIN || 30);
+const RUN_S = +(process.env.RUN_S || 180), N = +(process.env.NCOIN || 30);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
   const out = { at: new Date().toISOString() };
