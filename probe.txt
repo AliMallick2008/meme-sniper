@@ -1,0 +1,127 @@
+{
+ "at": "2026-10-22T16:13:52.072Z",
+ "coins": 30,
+ "statusLog": [
+  [
+   0.2,
+   true,
+   "connected"
+  ]
+ ],
+ "seconds": 180,
+ "got": {
+  "tape": 2672,
+  "curve": 346,
+  "tape_status": 1,
+  "tape_sub": 30
+ },
+ "stats": {
+  "up": true,
+  "subs": 30,
+  "trades": 2672,
+  "dupes": 23474,
+  "failedTx": 5570,
+  "decodeMiss": 4,
+  "curves": 346,
+  "polls": 89,
+  "pollFails": 0,
+  "reconnects": 2,
+  "drops": 2,
+  "lastMsgAt": 1792685818843,
+  "lastTradeAt": 1792685818842,
+  "subErrors": 0,
+  "lastClose": {
+   "at": 1792685785394,
+   "conn": 1,
+   "code": 1006,
+   "reason": "",
+   "afterMs": 141325
+  },
+  "conns": [
+   {
+    "up": true,
+    "subs": 30,
+    "drops": 1
+   },
+   {
+    "up": true,
+    "subs": 30,
+    "drops": 1
+   }
+  ]
+ },
+ "samples": [
+  {
+   "type": "curve",
+   "at": 1792685638875,
+   "m": "J5zBjKoYkQj9dN3RevXQLhEnyLnQgW9YWkS7gKo8pump",
+   "slot": 460099131,
+   "vs": 183667,
+   "vt": 336648499,
+   "rs": 80616,
+   "rt": 56748499,
+   "done": false,
+   "src": "poll",
+   "cr": "GttC5uV5"
+  },
+  {
+   "type": "curve",
+   "at": 1792685638875,
+   "m": "DgTtn7tujixhEgAEijrhCo23kQSsxX1t1DYmj7xupump",
+   "slot": 460099131,
+   "vs": 75725,
+   "vt": 491900904,
+   "rs": 39118,
+   "rt": 212000904,
+   "done": false,
+   "src": "poll",
+   "cr": "DpqpooXC"
+  },
+  {
+   "type": "curve",
+   "at": 1792685638875,
+   "m": "Aet1qfHCM1d6ZcXyiUyaq3Pujo2n21jjcsT7Cc8apump",
+   "slot": 460099131,
+   "vs": 587172,
+   "vt": 916350990,
+   "rs": 32713,
+   "rt": 636450990,
+   "done": false,
+   "src": "poll",
+   "cr": "CJpqbCVD"
+  },
+  {
+   "type": "curve",
+   "at": 1792685638875,
+   "m": "4wZiefjZovjC9Wr1EtAmGdrPQcamSiJCpMxPLHxApump",
+   "slot": 460099131,
+   "vs": 81853,
+   "vt": 526821210,
+   "rs": 45096,
+   "rt": 246921210,
+   "done": false,
+   "src": "poll",
+   "cr": "HpmUFT8S"
+  }
+ ],
+ "recording": {
+  "lines": 3079,
+  "rawBytes": 238339,
+  "gzBytes": 80095,
+  "gzPerHourMB": 1.6
+ },
+ "perCoinTop": [
+  817,
+  381,
+  295,
+  275,
+  181,
+  174,
+  138,
+  102,
+  100,
+  93
+ ],
+ "uptime": 0.999,
+ "decodeOk": true
+}
