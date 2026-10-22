@@ -67,7 +67,7 @@ days. **Promotion** as v2.0 (audit D5). v3.0 never changes; a v3.1 would be a ne
 
 ## Amendments (before the start)
 
-1. Oct 22 2026, 3:40 PM UTC, before v3 started and before any tape outcome was seen: rule (b) of A3e read "its highest
+1. Oct 22 2026, 3:21 PM UTC, before v3 started and before any tape outcome was seen: rule (b) of A3e read "its highest
    trade price of the last 10 seconds". Writing the tests showed the hole in that wording: a coin with no trade for a
    while that is dumped in one transaction has only the dump inside the window, so the drop could never count. The rule
    now includes the price the curve started the window at (the last trade before it). Nothing else changed.
