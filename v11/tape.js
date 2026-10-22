@@ -161,10 +161,12 @@ function createTape(opts) {
       } catch (e) { /* a bad message never stops the lane */ }
     };
     me.onerror = () => {};
-    me.onclose = () => {
+    me.onclose = e => {
       if (me !== ws) return;
+      const code = e && e.code, reason = e && e.reason ? String(e.reason).slice(0, 80) : '';
+      stats.lastClose = { at: now(), code: code || null, reason, afterMs: now() - openedAt };
       const was = wsUp; wsUp = false; ws = null; subs.clear(); bySub.clear(); pendingReq.clear(); stats.subs = 0;
-      if (was) status(false, 'disconnected');
+      if (was) status(false, `disconnected (code ${code || '?'}${reason ? ': ' + reason : ''})`);
       scheduleRetry();
     };
   }

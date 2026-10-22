@@ -2,7 +2,7 @@
 /* Probe 5 (read-only): the real tape module (server/v11/tape.js) against the public RPC for RUN_S seconds on the
    busiest curves of the moment, with the real recorder to measure the recording volume. Paper only. */
 const T = require('./v11/tape.js'), REC = require('./v11/record.js');
-const RUN_S = +(process.env.RUN_S || 75), N = +(process.env.NCOIN || 30);
+const RUN_S = +(process.env.RUN_S || 150), N = +(process.env.NCOIN || 30);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
   const out = { at: new Date().toISOString() };
@@ -25,7 +25,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // the lane, as the runtime runs it
   const rec = REC.recorder(), got = { tape: 0, curve: 0, tape_status: 0 }, samples = [], perCoin = {};
   const t0 = Date.now();
-  const tape = T.createTape({ now: () => Date.now(), log: s => (out.log = out.log || []).push(s), ingest: ev => { got[ev.type] = (got[ev.type] || 0) + 1; rec.event(ev); if (samples.length < 4 && ev.type !== 'tape_status') samples.push(ev); if (ev.m) perCoin[ev.m] = (perCoin[ev.m] || 0) + 1; } });
+  const tape = T.createTape({ now: () => Date.now(), log: s => (out.log = out.log || []).push(s), ingest: ev => { got[ev.type] = (got[ev.type] || 0) + 1; if (ev.type === 'tape_status') (out.statusLog = out.statusLog || []).push([Math.round((Date.now() - t0) / 100) / 10, ev.up, ev.why]); rec.event(ev); if (samples.length < 4 && ev.type !== 'tape_status') samples.push(ev); if (ev.m) perCoin[ev.m] = (perCoin[ev.m] || 0) + 1; } });
   let lastWant = 0, lastPoll = 0;
   while (Date.now() - t0 < RUN_S * 1000) {
     const t = Date.now();
@@ -40,7 +40,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   out.perCoinTop = Object.values(perCoin).sort((a, b) => b - a).slice(0, 10);
   // the recorded inputs decode back to the same events
   const dec = [...REC.decode([lines])].filter(x => x.k === 'event').map(x => x.ev);
-  out.decodeOk = dec.length === got.tape + got.curve + got.tape_status;
+  out.decodeOk = dec.length === Object.values(got).reduce((a, b) => a + b, 0);
   console.log(JSON.stringify(out, null, 1));
   process.exit(0);
 })();
