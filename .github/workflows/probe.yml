@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       urls:
-        description: space-separated public RPC URLs (https)
+        description: probe script, then space-separated public RPC URLs (https)
         required: true
 permissions:
   contents: write
@@ -24,9 +24,11 @@ jobs:
           node-version: 22
       - name: websocket probe
         env:
-          RPCS: ${{ inputs.urls }}
+          ARGS: ${{ inputs.urls }}
         run: |
-          timeout 200 node probe_ws.js > probe.txt 2>&1 || echo "exit $?" >> probe.txt
+          set -- $ARGS
+          SCRIPT=$1; shift
+          RPCS="$*" RPC="$1" timeout 240 node "$SCRIPT" > probe.txt 2>&1 || echo "exit $?" >> probe.txt
           wc -c probe.txt
       - name: save on the probe branch
         env:
