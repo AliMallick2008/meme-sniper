@@ -16,7 +16,8 @@
        SOL after the trade, micro-SOL), vt (virtual tokens after it, whole tokens), cr (creator, 8 chars: on the coin's
        first trade in this run) }
      { type: 'curve', at, m, slot, vs, vt, rs, rt (same units), done, src, cr }   polled, only when the state changed
-     { type: 'tape_status', at, up, subs, why }                  the websocket went up or down */
+     { type: 'tape_status', at, up, subs, why }                  the websocket went up or down
+     { type: 'tape_sub', at, m, on }                             a coin's subscription was confirmed (on) or ended */
 const crypto = require('crypto');
 
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
@@ -92,9 +93,10 @@ function createTape(opts) {
     const id = ++reqId; pendingReq.set(id, { bc, kind: 'sub' }); subs.set(bc, { id, sub: null });
     if (!send({ jsonrpc: '2.0', id, method: 'logsSubscribe', params: [{ mentions: [bc] }, { commitment: 'processed' }] })) { subs.delete(bc); pendingReq.delete(id); }
   }
-  function unsubscribe(bc) {
+  function unsubscribe(bc, m) {
     const s = subs.get(bc); if (!s) return;
     subs.delete(bc);
+    if (s.sub != null && m) ingest({ type: 'tape_sub', at: now(), m, on: false });
     if (s.sub != null) { bySub.delete(s.sub); const id = ++reqId; pendingReq.set(id, { bc, kind: 'unsub' }); send({ jsonrpc: '2.0', id, method: 'logsUnsubscribe', params: [s.sub] }); }
   }
   function newer(m, slot, vs, vt) {
@@ -144,7 +146,12 @@ function createTape(opts) {
           if (r.kind === 'sub') {
             const s = subs.get(r.bc);
             if (j.error) { stats.subErrors++; subs.delete(r.bc); }
-            else if (s && s.id === j.id) { s.sub = j.result; bySub.set(j.result, r.bc); }
+            else if (s && s.id === j.id) {
+              s.sub = j.result; bySub.set(j.result, r.bc);
+              // the engine trusts the coin's tape only after a curve state received from now on: the next poll sends one
+              // even if nothing changed
+              const d = desired.get(r.bc); if (d) { last.delete(d.m); ingest({ type: 'tape_sub', at: now(), m: d.m, on: true }); }
+            }
             else send({ jsonrpc: '2.0', id: ++reqId, method: 'logsUnsubscribe', params: [j.result] });   // no longer wanted
           }
           stats.subs = subs.size;
@@ -190,7 +197,7 @@ function createTape(opts) {
       if (!mb) continue;
       next.set(x.bc, { m: x.m, bc: x.bc, mintBytes: mb });
     }
-    for (const bc of [...desired.keys()]) if (!next.has(bc)) { desired.delete(bc); unsubscribe(bc); }
+    for (const [bc, d] of [...desired.entries()]) if (!next.has(bc)) { desired.delete(bc); unsubscribe(bc, d.m); }
     for (const [bc, d] of next) if (!desired.has(bc)) { desired.set(bc, d); if (wsUp) subscribe(bc); }
     for (const m of [...last.keys()]) if (![...desired.values()].some(d => d.m === m)) last.delete(m);
     if (!ws && !closing && now() >= retryAt) connect();
