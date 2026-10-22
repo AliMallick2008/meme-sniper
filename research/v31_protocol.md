@@ -1,6 +1,6 @@
 # v3.1 protocol: A4, late launch momentum on the tape
 
-**Locked:** Thu Oct 22 2026, 4:05 PM UTC (12:05 PM ET), when this file was pushed to the branch `v3-lock`, before A4
+**Locked:** Thu Oct 22 2026, 3:58 PM UTC (11:58 AM ET), when this file was first pushed to the branch `v3-lock`, before A4
 existed in code and before any v3 forward trade (v3.0 was deployed at 3:55 PM UTC and had not traded). `LOCKED_31` in
 `server/v11/v3.js` carries the same time. v2.0 and v3.0 are unchanged and keep running beside it.
 
