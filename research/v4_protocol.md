@@ -1,6 +1,6 @@
 # v4 research protocol: telling runners from rugs on the trade tape (pre-registered)
 
-**Written:** Thu Oct 22 2026, 12:50 PM ET (16:50 UTC), before any analysis of tape features against outcomes. The trade
+**Written:** Thu Oct 22 2026, 12:41 PM ET (16:41 UTC, commit 12e9611), before any analysis of tape features against outcomes. The trade
 tape started on the server at 15:59 UTC Oct 22. Tape data seen before this: probe samples (decoding, rates, volume) and
 the first v3 trades (A3 +10.7 SOL on JAMESON; A3e's 20%-in-10-s exit fired on JAMESON 2 s after its fill), which are
 forward results of locked rules, not feature analyses.
