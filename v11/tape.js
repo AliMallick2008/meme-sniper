@@ -73,7 +73,7 @@ const short = w => (w ? String(w).slice(0, 8) : null);
      ingest(ev)       records the event and feeds it to the engine (runtime.js)
      log(text)
      fetch(url, init) HTTP (global fetch); WS: WebSocket constructor (global in Node 22); url: RPC base URL
-   Returns { want(list of { m, bc }), poll(), start(L), stats, stop() }. Nothing throws out of it. */
+   Returns { want(list of { m, bc }), poll(), maintain(), start(L, plan), stats, stop() }. Nothing throws out of it. */
 function createTape(opts) {
   const now = opts.now, log = opts.log || (() => {}), ingest = opts.ingest;
   const url = opts.url || RPC_URL, WSImpl = opts.WS || (typeof WebSocket === 'function' ? WebSocket : null), fetchImpl = opts.fetch || (typeof fetch === 'function' ? fetch : null);
@@ -150,7 +150,7 @@ function createTape(opts) {
               s.sub = j.result; bySub.set(j.result, r.bc);
               // the engine trusts the coin's tape only after a curve state received from now on: the next poll sends one
               // even if nothing changed
-              const d = desired.get(r.bc); if (d) { last.delete(d.m); ingest({ type: 'tape_sub', at: now(), m: d.m, on: true }); }
+              const d = desired.get(r.bc); if (d) { last.delete(d.m); pollSoon = true; ingest({ type: 'tape_sub', at: now(), m: d.m, on: true }); }
             }
             else send({ jsonrpc: '2.0', id: ++reqId, method: 'logsUnsubscribe', params: [j.result] });   // no longer wanted
           }
@@ -173,7 +173,9 @@ function createTape(opts) {
   function scheduleRetry(why) {
     if (closing) return;
     stats.reconnects++;
-    backoff = Math.min(60000, backoff ? backoff * 2 : 2000);
+    // the public RPC drops idle-or-not connections every 10-20 s at busy hours (code 1006, Oct 22 2026 probe), so the first
+    // retry is quick; repeated failures back off to 30 s
+    backoff = Math.min(30000, backoff ? backoff * 2 : 500);
     retryAt = now() + backoff;
     if (why) log('tape: ' + why);
   }
@@ -202,12 +204,21 @@ function createTape(opts) {
     for (const [bc, d] of [...desired.entries()]) if (!next.has(bc)) { desired.delete(bc); unsubscribe(bc, d.m); }
     for (const [bc, d] of next) if (!desired.has(bc)) { desired.set(bc, d); if (wsUp) subscribe(bc); }
     for (const m of [...last.keys()]) if (![...desired.values()].some(d => d.m === m)) last.delete(m);
-    if (!ws && !closing && now() >= retryAt) connect();
+    maintain();
   }
-  // the same curves over HTTP every couple of seconds: fills any gap in the logs and reports completion
-  let polling = false;
+  // replace a dead socket, reconnect when the backoff allows (called every second and from want)
+  function maintain() {
+    watchdog();
+    if (!ws && !closing && desired.size && now() >= retryAt) connect();
+  }
+  // the same curves over HTTP every 2 s (at once after a (re)subscription): fills any gap in the logs, keeps the exact
+  // curve state fresh while the socket is down, and reports completion
+  let polling = false, lastPollAt = -Infinity, pollSoon = false;
+  const doneSent = new Set();
   async function poll() {
     if (polling || !fetchImpl || !desired.size) return;
+    if (!pollSoon && now() - lastPollAt < 1900) return;
+    pollSoon = false; lastPollAt = now();
     polling = true;
     try {
       const ds = [...desired.values()];
@@ -228,7 +239,8 @@ function createTape(opts) {
           const d = batch[k]; if (!d || !desired.has(d.bc) || !v || v.owner !== PUMP || !v.data) return;
           const c = decodeCurve(v.data[0]); if (!c || !(c.vSol > 0) || !(c.vTok > 0)) return;
           const vs = uSol(c.vSol), vt = tok(c.vTok);
-          if (!newer(d.m, slot, vs, vt) && !c.done) return;
+          if (!newer(d.m, slot, vs, vt) && !(c.done && !doneSent.has(d.m))) return;
+          if (c.done) doneSent.add(d.m);
           stats.curves++;
           const ev = { type: 'curve', at, m: d.m, slot, vs, vt, rs: uSol(c.rSol), rt: tok(c.rTok), done: c.done, src: 'poll' };
           if (!crSent.has(d.m) && c.creator) { ev.cr = short(c.creator); crSent.add(d.m); }
@@ -240,10 +252,10 @@ function createTape(opts) {
   function start(L, plan) {
     if (!WSImpl && !fetchImpl) { log('tape: no WebSocket or fetch available, lane off'); return; }
     L(async () => { want(plan()); }, 3000, 'v11-tape');
-    L(poll, 2000, 'v11-curve');
+    L(async () => { maintain(); await poll(); }, 1000, 'v11-curve');
   }
   function stop() { closing = true; try { if (ws) ws.close(); } catch (e) { /* closing */ } }
-  return { want, poll, start, stop, stats, desired };
+  return { want, poll, maintain, start, stop, stats, desired };
 }
 
 module.exports = { createTape, decodeTrade, decodeComplete, decodeCurve, b58, unb58, PUMP, RPC_URL, TAPE_MAX, VIRT_TOKENS, D_TRADE, D_COMPLETE };

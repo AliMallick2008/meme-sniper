@@ -30,7 +30,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   while (Date.now() - t0 < RUN_S * 1000) {
     const t = Date.now();
     if (t - lastWant >= 3000) { lastWant = t; tape.want(coins); }
-    if (t - lastPoll >= 2000) { lastPoll = t; await tape.poll(); }
+    if (t - lastPoll >= 1000) { lastPoll = t; tape.maintain(); await tape.poll(); }
     await sleep(200);
   }
   tape.stop();
@@ -38,6 +38,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   out.seconds = RUN_S; out.got = got; out.stats = tape.stats; out.samples = samples;
   out.recording = { lines: lines.length, rawBytes: raw.length, gzBytes: gz.length, gzPerHourMB: +(gz.length / RUN_S * 3600 / 1e6).toFixed(2) };
   out.perCoinTop = Object.values(perCoin).sort((a, b) => b - a).slice(0, 10);
+  { let up = 0, lastT = 0, st = false; for (const [ts, u] of out.statusLog || []) { if (st) up += ts - lastT; lastT = ts; st = u; } if (st) up += RUN_S - lastT; out.uptime = +(up / RUN_S).toFixed(3); }
   // the recorded inputs decode back to the same events
   const dec = [...REC.decode([lines])].filter(x => x.k === 'event').map(x => x.ev);
   out.decodeOk = dec.length === Object.values(got).reduce((a, b) => a + b, 0);
