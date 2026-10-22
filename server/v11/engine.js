@@ -13,6 +13,8 @@ const FEES = require('./fees.js');
 const ST = require('./strategies.js');
 const V2 = require('./v2.js');
 const FT = require('./features.js');
+const TS = require('./tapestate.js');
+const V3 = require('./v3.js');
 
 const VERSION = '11.1';            // 11.1: Jupiter-first prices with data times (market.js); 11.0 accounts archived
 const GAP_MS = 90000;            // silence longer than this between server runs is a coverage gap
@@ -30,15 +32,15 @@ const FAST_YOUNG_MS = 20 * 60000;       // every crossed coin gets 5 s prices fo
 const FOLLOW_MS = 3 * 3600e3, FOLLOW_POOL_MS = 8 * 3600e3;   // then 30 s prices while alive: 3 h, or 8 h once it trades on a pool
 const alive = (c, at) => !c.deadAt && (at - c.xAt < FOLLOW_MS || (c.stage === 'pool' && at - c.xAt < FOLLOW_POOL_MS));
 
-// opts.accounts: the account set (default: the 7 E0 accounts, HOLD, and V2 A/B/C); replays use it for ablations
+// opts.accounts: the account set (default: the 7 E0 accounts, HOLD, V2 A/B/C and v3 A3/A3e/B3); replays use it for ablations
 function createEngine(opts = {}) {
   let S = null;
-  const accountDefs = opts.accounts || (() => ST.accounts().concat(V2.accounts()));
+  const accountDefs = opts.accounts || (() => ST.accounts().concat(V2.accounts(), V3.accounts()));
 
   // ------------------------------------------------------------------------------------------------ state
   function init(at) {
     S = { v: VERSION, startedAt: at, lastAt: at, run: null, runs: [], coins: {}, crosses: [], sol: [], accts: {}, orders: {}, seen: {},
-      log: [], outbox: [], gaps: [], halted: null, lastFeedAt: 0, nOrders: 0 };
+      log: [], outbox: [], gaps: [], halted: null, lastFeedAt: 0, nOrders: 0, cq: [] };
     for (const a of accountDefs()) S.accts[a.id] = newAccount(a, at);
     return S;
   }
@@ -48,7 +50,7 @@ function createEngine(opts = {}) {
   }
   const save = () => JSON.parse(JSON.stringify(Object.assign({}, S, { outbox: [] })));
   function load(s) {
-    S = s; S.outbox = [];
+    S = s; S.outbox = []; S.cq = S.cq || [];
     if (S.v !== VERSION) upgrade(S.v);
     // an account whose rules changed revision (e.g. E0 rev 2: the legacy bots' own watchlists) is archived and restarts alone
     for (const a of accountDefs()) {
@@ -101,7 +103,26 @@ function createEngine(opts = {}) {
       case 'legacy_watch': return legacyWatch(ev);
       case 'snapshot': return snapshot(ev);
       case 'sol': S.sol.push({ at: ev.at, usd: ev.usd }); if (S.sol.length > 600) S.sol.splice(0, S.sol.length - 600); return [];
-      case 'quote': return quote(ev);
+      case 'quote': qcheck(ev); return quote(ev);
+      // the tape lane (tape.js): exact curve reserves and every trade of the coins that matter, kept in c.tp. No v2.0 or
+      // E0 rule reads it; the v3 accounts (tape: true) are valued, reviewed and filled on it while it is live
+      case 'tape': case 'curve': {
+        const c = S.coins[ev.m];
+        curveFills(ev.at, true);                    // orders due before this observation fill on the state before it
+        if (!c) return [];
+        if (ev.type === 'tape') TS.onTape(c, ev); else TS.onCurve(c, ev);
+        curveFills(ev.at, false);
+        tapeReview(c, ev.at);
+        return [];
+      }
+      case 'tape_sub': { const c = S.coins[ev.m]; if (c) TS.onSub(c, ev); return []; }
+      case 'tape_status': {
+        const was = S.tape && S.tape.up;
+        S.tape = { up: !!ev.up, at: ev.at, subs: ev.subs || 0, why: ev.why || null };
+        if (!ev.up) for (const c of Object.values(S.coins)) if (c.tp) c.tp.sub = false;   // every subscription ended with the socket
+        if (!!ev.up !== !!was) log(ev.up ? 'TapeUp' : 'TapeDown', ev.at, { why: ev.why || null });
+        return [];
+      }
       default: return [];
     }
   }
@@ -201,9 +222,52 @@ function createEngine(opts = {}) {
       o.size = A.pos.qty;
       o.decision.expectOut = X.sellOut(o.size, sig.ps, venue, at).sol;
     }
+    // v3 (tape: true) while the coin's tape is live: no quote; the order fills against the curve as last received at or
+    // before decision + V3.FILL_MS (curveFills), and the decision-time estimate comes from the same curve
+    const onCurve = A.tape && venue === 'curve' && TS.live(S, c);
+    if (onCurve) {
+      const st = c.tp.last, fee = FEES.feeRate(at / 1000, 'curve', st.ps * E.SUPPLY);
+      o.mode = 'curve'; o.fillAt = at + V3.FILL_MS;
+      o.decision.curve = { at: st.at, slot: st.slot, ps: st.ps };
+      o.decision.expectOut = side === 'buy' ? TS.curveBuy(st, o.size, fee).tokens : TS.curveSell(st, o.size, fee).sol;
+      S.cq.push(id);
+    }
     S.orders[id] = o; A.pending = id; A.n.orders++; S.nOrders++;
-    log('OrderRequested', at, { id, acct: A.id, m: o.m, sym: o.sym, side, size: o.size, why: o.why, decision: o.decision, contract: o.contract || undefined, thesis: side === 'sell' && A.pos.thesis ? A.pos.thesis : undefined });
+    log('OrderRequested', at, { id, acct: A.id, m: o.m, sym: o.sym, side, size: o.size, why: o.why, decision: o.decision, contract: o.contract || undefined, thesis: side === 'sell' && A.pos.thesis ? A.pos.thesis : undefined, fillAt: o.fillAt });
+    if (onCurve) return null;
     return { type: 'quote', orderId: id, m: o.m, side, amount: side === 'buy' ? Math.round(o.size * 1e9) : Math.floor(o.size * 10 ** DEC), venue };
+  }
+  // v3 curve orders whose fill time has come (strict: only those due before `at`, i.e. before an observation received at `at`)
+  function curveFills(at, strict) {
+    if (!S.cq.length) return;
+    for (const id of S.cq.slice()) {
+      const o = S.orders[id];
+      if (!o || o.status !== 'requested') { S.cq = S.cq.filter(x => x !== id); continue; }
+      if (strict ? o.fillAt >= at : o.fillAt > at) continue;
+      S.cq = S.cq.filter(x => x !== id);
+      const c = S.coins[o.m], st = c && c.tp && c.tp.last;
+      if (!st) { fail(o, 'no curve state from the tape', o.fillAt); continue; }
+      if (c.tp.done) { fail(o, 'curve complete: the coin is graduating', o.fillAt); continue; }
+      // the fill, as an executable answer from the curve (venue fee inside, like a Jupiter quote), then the usual
+      // accounting (drift, network fee, rent, slippage and impact checks) in quote()
+      const fee = FEES.feeRate(o.fillAt / 1000, 'curve', st.ps * E.SUPPLY);
+      const r = o.side === 'buy' ? TS.curveBuy(st, o.size, fee) : TS.curveSell(st, o.size, fee);
+      quote({ type: 'quote', at: o.fillAt, orderId: o.id, m: o.m, side: o.side, inAmount: o.side === 'buy' ? Math.round(o.size * 1e9) : Math.floor(o.size * 10 ** DEC),
+        outAmount: o.side === 'buy' ? Math.floor(r.tokens * 10 ** DEC) : Math.floor(r.sol * 1e9), impactPct: r.impact, route: ['pump.fun curve (tape)'], venue: 'curve',
+        slot: st.slot, curveAt: st.at, ok: true, valid: true, tape: true });
+    }
+  }
+  /* the fill model check (research/v3_protocol.md section 3): each Jupiter quote for a coin whose tape is live, against
+     the curve model's answer for the same amount at that moment */
+  function qcheck(ev) {
+    if (ev.tape || !ev.ok || ev.valid === false || !(ev.outAmount > 0) || !(ev.inAmount > 0) || ev.venue !== 'curve') return;
+    const c = S.coins[ev.m]; if (!c || !TS.live(S, c)) return;
+    const st = c.tp.last, fee = FEES.feeRate(ev.at / 1000, 'curve', st.ps * E.SUPPLY);
+    const model = ev.side === 'buy' ? TS.curveBuy(st, ev.inAmount / 1e9, fee).tokens * 10 ** DEC : TS.curveSell(st, ev.inAmount / 10 ** DEC, fee).sol * 1e9;
+    if (!(model > 0)) return;
+    const q = S.qc || (S.qc = { n: 0, gaps: [] });
+    q.n++; q.gaps.push([ev.at, +(ev.outAmount / model - 1).toFixed(5), ev.at - st.at, ev.side === 'buy' ? 1 : 0]);
+    if (q.gaps.length > 300) q.gaps.splice(0, q.gaps.length - 300);
   }
   function cancel(o, why, at) {
     o.status = 'cancelled'; o.reason = why; o.doneAt = at;
@@ -300,6 +364,16 @@ function createEngine(opts = {}) {
       p.mark = { at, value: null, src: 'route-lost', distressed: true, since: c.routeLostAt, last: p.mark && p.mark.value != null ? { value: p.mark.value, at: p.mark.at } : (p.mark && p.mark.last) || null, lo: 0, floor: 0 };
       return p.mark;
     }
+    // v3 (tape: true) while the coin's tape is live: the exact sale of the position on the curve as last received
+    if (A.tape && venue === 'curve' && c && TS.live(S, c)) {
+      const st = c.tp.last, fee = FEES.feeRate(at / 1000, 'curve', st.ps * E.SUPPLY);
+      const value = TS.curveSell(st, p.qty, fee).sol * (1 - FEES.COSTS.landingDrift) - FEES.COSTS.networkFeeSol;
+      const floor = X.curveFloorValue(p.qty, at);
+      p.mark = { at, value, src: 'curve', age: at - st.at, lo: Math.min(value, Math.max(floor, 0)), floor };
+      p.priced = true;
+      const r = value / p.cost - 1; p.mae = Math.min(p.mae, r); p.mfe = Math.max(p.mfe, r); p.peak = Math.max(p.peak, value);
+      return p.mark;
+    }
     // the freshest of: an executable sell quote for this position, or the model on a fresh observed price
     const q = p.quote && p.quote.sol != null && at - p.quote.at <= 90000 ? p.quote : null;
     const last = c && MK.fresh(c, at, 30000);
@@ -342,6 +416,8 @@ function createEngine(opts = {}) {
     const reqs = [];
     const fcache = new Map();      // features of each coin at this tick, shared by every strategy
     fc = c => { let f = fcache.get(c.m); if (!f) { f = FT.features(c, at); fcache.set(c.m, f); } return f; };
+    liveCache = null;
+    curveFills(at, false);
     for (const o of Object.values(S.orders)) if (o.status === 'requested' && at - o.reqAt > ORDER_TTL) fail(o, 'no quote within 30 s', at);
     const active = Object.keys(S.coins).length > 0;
     const halted = active && at - S.lastFeedAt > FEED_STALE_MS;
@@ -359,23 +435,7 @@ function createEngine(opts = {}) {
     }
     for (const A of accts()) {
       if (A.kind === 'hold' || !A.pos) continue;
-      {
-        mark(A, at);
-        if (!A.pending) {
-          const c = S.coins[A.pos.m];
-          const r = c ? review(A, c, at) : { hold: true, state: 'unpriceable', why: 'coin data gone' };
-          const prev = A.pos.state;
-          if (c && c.routeLostAt && !r.exit) { r.state = 'exit_unavailable'; r.why = 'no executable sell route: value marked distressed'; }
-          if (r.exit) {
-            if (A.pos.exitFail && at - A.pos.exitFail.at < 15000) { /* wait before retrying a failed exit */ }
-            else { const last = MK.fresh(c, at, ST.FRESH_MS) || c.last || {}; reqs.push(order(A, 'sell', { m: A.pos.m, p: last.p, ps: last.ps || A.pos.entrySpot, why: r.why, reason: r.exit, sigAt: at }, at)); A.pos.state = 'exit_pending'; }
-          } else A.pos.state = A.pos.exitFail && A.pos.state === 'exit_unavailable' ? 'exit_unavailable' : r.state;
-          if (A.pos && (A.pos.state !== prev || (r.thesis && r.thesis.state !== (A.pos.lastThesis || 'healthy')))) {
-            if (r.thesis) A.pos.lastThesis = r.thesis.state;
-            log('PositionReviewed', at, { acct: A.id, m: A.pos.m, sym: A.pos.sym, state: A.pos.state, why: r.why, thesis: r.thesis ? r.thesis.families : undefined, exit: r.exit || undefined });
-          }
-        }
-      }
+      reviewPos(A, at, reqs);
     }
     for (const A of accts()) {
       if (A.kind !== 'hold' && !A.pos && !A.pending && !S.halted && A.cash > 0.06) {
@@ -387,15 +447,52 @@ function createEngine(opts = {}) {
     prune(at);
     return reqs;
   }
-  let fc = null;
+  let fc = null, liveCache = null;
+  // one held position: its mark, its review, and an exit order when the review says so. f: features (default: the tick's)
+  function reviewPos(A, at, reqs, f) {
+    mark(A, at);
+    if (A.pending) return;
+    const c = S.coins[A.pos.m];
+    const r = c ? review(A, c, at, f) : { hold: true, state: 'unpriceable', why: 'coin data gone' };
+    const prev = A.pos.state;
+    if (c && c.routeLostAt && !r.exit) { r.state = 'exit_unavailable'; r.why = 'no executable sell route: value marked distressed'; }
+    if (r.exit) {
+      if (A.pos.exitFail && at - A.pos.exitFail.at < 15000) { /* wait before retrying a failed exit */ }
+      else { const last = MK.fresh(c, at, ST.FRESH_MS) || c.last || {}; const q = order(A, 'sell', { m: A.pos.m, p: last.p, ps: last.ps || A.pos.entrySpot, why: r.why, reason: r.exit, sigAt: at }, at); if (q) reqs.push(q); A.pos.state = 'exit_pending'; }
+    } else A.pos.state = A.pos.exitFail && A.pos.state === 'exit_unavailable' ? 'exit_unavailable' : r.state;
+    if (A.pos && (A.pos.state !== prev || (r.thesis && r.thesis.state !== (A.pos.lastThesis || 'healthy')))) {
+      if (r.thesis) A.pos.lastThesis = r.thesis.state;
+      log('PositionReviewed', at, { acct: A.id, m: A.pos.m, sym: A.pos.sym, state: A.pos.state, why: r.why, thesis: r.thesis ? r.thesis.families : undefined, exit: r.exit || undefined });
+    }
+  }
+  /* v3: a held coin's tape moved (a trade or a new curve state): the accounts that hold it on the tape revalue and review
+     it now instead of at the next tick. Only while the tape is live and the coin trades on its curve, so any exit order
+     fills on the curve (no quote request can be lost here). */
+  function tapeReview(c, at) {
+    let f = null;
+    for (const A of accts()) {
+      if (!A.tape || !A.pos || A.pos.m !== c.m || A.pending || c.stage !== 'curve' || !TS.live(S, c)) continue;
+      const reqs = [];
+      reviewPos(A, at, reqs, f || (f = FT.features(c, at)));
+    }
+  }
+  // coins whose tape is live and that trade on their curve (the v3 entry universe), once per tick
+  function liveCoins() {
+    if (!liveCache) { liveCache = {}; for (const [m, c] of Object.entries(S.coins)) if (c.stage === 'curve' && TS.live(S, c)) liveCache[m] = c; }
+    return liveCache;
+  }
   function entry(A, at) {
     if (A.kind === 'e0') return ST.e0Entry(A, at, S.coins);
-    if (A.kind === 'v2') return V2.entry(A, at, S.coins, fc, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol - 0.01, log);
+    if (A.kind === 'v2') return V2.entry(A, at, A.tape ? liveCoins() : S.coins, fc, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol - 0.01, log);
     return null;
   }
-  function review(A, c, at) {
+  function review(A, c, at, f) {
     if (A.kind === 'e0') return ST.e0Review(A, A.pos, c, at);
-    if (A.kind === 'v2') return V2.review(A, A.pos, c, at, fc(c));
+    if (A.kind === 'v2') {
+      // A3e: the tape's emergency exits come first (research/v3_protocol.md)
+      if (A.tapeEmergency && TS.live(S, c)) { const em = V3.emergency(A.pos, c, at); if (em) return { exit: 'emergency', why: em, thesis: A.pos.thesis || null }; }
+      return V2.review(A, A.pos, c, at, f || fc(c));
+    }
     return { hold: true, state: 'holding', why: '' };
   }
   function prune(at) {
@@ -407,6 +504,7 @@ function createEngine(opts = {}) {
     for (const A of accts()) for (const [m, w] of Object.entries(A.watch)) if (w.done && at - w.to > 6 * 3600e3) delete A.watch[m];
     for (const [m, c] of Object.entries(S.coins)) if (!keep.has(m) && !alive(c, at) && at - c.xAt > (Object.values(S.accts).some(A => A.watch[m]) ? KEEP_COIN_MS : DROP_UNWATCHED_MS)) delete S.coins[m];
     for (const A of accts()) for (const [m, s] of Object.entries(A.seen)) if (at - s.at > 3 * 3600e3) delete A.seen[m];
+    for (const c of Object.values(S.coins)) TS.trim(c, at);
     for (const A of accts()) if (A.kind === 'v2') {
       for (const [m, x] of Object.entries(A.fun || {})) if (!S.coins[m] && at - x.at > 3600e3) delete A.fun[m];
       for (const m of Object.keys(A.gateSeen || {})) if (!S.coins[m]) delete A.gateSeen[m];
@@ -443,7 +541,17 @@ function createEngine(opts = {}) {
     for (const c of Object.values(S.coins)) if (!held.has(c.m) && !fast.has(c.m) && alive(c, at)) slow.push(c.m);
     return { held: [...held], fast: [...held, ...fast], slow };
   }
+  /* which bonding curves the tape lane should follow (at most TAPE_MAX, tape.js): curve coins held or being ordered
+     first, then the fast list (watched, young, V2 setup candidates), newest crossing first */
+  function tapePlan(at) {
+    const plan = pollPlan(at), held = new Set(plan.held), out = [];
+    const ok = c => c && c.bc && c.stage !== 'pool' && !(c.tp && c.tp.done) && !c.deadAt;
+    for (const m of plan.held) { const c = S.coins[m]; if (ok(c)) out.push({ m, bc: c.bc }); }
+    const rest = plan.fast.filter(m => !held.has(m)).map(m => S.coins[m]).filter(ok).sort((a, b) => b.xAt - a.xAt || (a.m < b.m ? -1 : 1));
+    for (const c of rest) out.push({ m: c.m, bc: c.bc });
+    return out;
+  }
   const equityNow = A => { const r = equityValue(A); return { value: r.known ? r.v : null, lo: r.lo, known: r.known }; };
-  return { init, load, save, ingest, tick, drain, addHypothetical, pollPlan, wantReports, state: () => S, mark, equity, equityNow, VERSION };
+  return { init, load, save, ingest, tick, drain, addHypothetical, pollPlan, tapePlan, wantReports, state: () => S, mark, equity, equityNow, VERSION };
 }
 module.exports = { createEngine, VERSION, GAP_MS, ORDER_TTL, MAX_SLIP, alive };

@@ -51,7 +51,8 @@ const logs = [];
 (async () => {
   fs.mkdirSync(DIR, { recursive: true });
   let done = false, out = null, err = null;
-  runServer({ clock, http: bridge, store, runS: UNTIL - T0, log: s => logs.push(`${new Date(clock.t).toISOString()} ${s}`), info: { run: RUN, sha: 'sim' } })
+  // the tape lane reads the real Solana RPC on the real clock, so the simulator runs without it (its own tests cover it)
+  runServer({ clock, http: bridge, store, runS: UNTIL - T0, log: s => logs.push(`${new Date(clock.t).toISOString()} ${s}`), info: { run: RUN, sha: 'sim' }, tape: false })
     .then(r => { done = true; out = r; }, e => { done = true; err = e; });
   const tick = () => new Promise(r => setImmediate(r));
   let pops = 0;

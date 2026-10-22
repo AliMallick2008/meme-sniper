@@ -69,8 +69,10 @@ function candles(price, from, to) {
    Prices every 5 s from DexScreener, Jupiter flow + audit every 20 s, checks `checksAfter` ms after each crossing, a decision
    tick every 5 s, every quote answered `quoteDelay` ms later (by `quote(r, at, p)` or the exact model fill). */
 const GOOD_AUDIT = { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, devBalancePercentage: 2, topHoldersPercentage: 15, devMints: 1 };
-function market({ coins, start = min(-1), stopAt, checksAfter = 30000, quoteDelay = 1000, quote = null, setup = null, accounts = null, extra = [] }) {
+function market({ coins, start = min(-1), stopAt, checksAfter = 30000, quoteDelay = 1000, quote = null, setup = null, accounts = null, extra = [], rec = null }) {
   const e = createEngine(accounts ? { accounts } : {});
+  // rec (record.js recorder, optional): every input and tick is recorded first, as the runtime does, for replay checks
+  if (rec) { rec.load(start, null); const ing = e.ingest, tk = e.tick; e.ingest = ev => { rec.event(ev); return ing(ev); }; e.tick = at => { rec.tick(at); return tk(at); }; }
   e.init(start);
   e.ingest({ type: 'run_start', at: start, run: 'test' });
   if (setup) setup(e.state());

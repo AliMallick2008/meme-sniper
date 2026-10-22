@@ -17,8 +17,11 @@
      ['V', at, info]       the code that recorded what follows ({ sha, engine, run }); replays should use that commit
      ['e', event]          crossing, audit, rugcheck, sol, quote or run_start event, as ingested
      ['d'|'j', i, k, vals] DexScreener / Jupiter snapshot of mint i (without m, id, type) as the values of shape k
-     ['=', i, src, at]     the previous snapshot from src for mint i, unchanged, received again at `at` */
+     ['=', i, src, at]     the previous snapshot from src for mint i, unchanged, received again at `at`
+     ['T', i, at, slot, b, s, q, u, vs, vt, cr?]          a trade of mint i from the tape lane (tape.js)
+     ['C', i, at, slot, vs, vt, rs, rt, done, src, cr?]   a polled curve state (or the curve's completion) of mint i */
 const zlib = require('zlib');
+const TS = require('./tapestate.js');
 
 const NUM = (k, v) => typeof v === 'number' && !isFinite(v) ? (Number.isNaN(v) ? '~NaN' : v > 0 ? '~Inf' : '~-Inf') : v;
 const REV = (k, v) => v === '~NaN' ? NaN : v === '~Inf' ? Infinity : v === '~-Inf' ? -Infinity : v;
@@ -35,6 +38,7 @@ function trimSave(s) {
     const jup = c.snaps.filter(x => x.src === 'jup').slice(-3), other = c.snaps.filter(x => x.src !== 'jup').slice(-2);
     c.snaps = c.snaps.filter(x => jup.includes(x) || other.includes(x)).map(x => Object.assign({}, x, { audit: undefined, st1h: undefined }));
     c.bars = c.bars.slice(-20).map(b => [b.t, r6(b.o), r6(b.h), r6(b.l), r6(b.c), b.n]);
+    TS.trimForSave(c, s.lastAt);
   }
   for (const A of Object.values(s.accts)) for (const k of Object.keys(A.seen)) A.seen[k] = { at: A.seen[k].at, pass: A.seen[k].pass };
   s.log = s.log.slice(-200);
@@ -69,6 +73,8 @@ function recorder() {
   function mi(m) { let i = mints.get(m); if (i == null) { i = mints.size; mints.set(m, i); push(['M', i, m]); } return i; }
   function shape(keys) { const key = keys.join(','); let k = shapes.get(key); if (k == null) { k = shapes.size; shapes.set(key, k); push(['K', k, keys]); } return k; }
   function event(ev) {
+    if (ev.type === 'tape') { const x = ['T', mi(ev.m), ev.at, ev.slot, ev.b, ev.s, ev.q, ev.u, ev.vs, ev.vt]; if (ev.cr) x.push(ev.cr); push(x); return; }
+    if (ev.type === 'curve') { const x = ['C', mi(ev.m), ev.at, ev.slot, ev.vs == null ? null : ev.vs, ev.vt == null ? null : ev.vt, ev.rs == null ? null : ev.rs, ev.rt == null ? null : ev.rt, ev.done ? 1 : 0, ev.src || null]; if (ev.cr) x.push(ev.cr); push(x); return; }
     if (ev.type !== 'snapshot') { push(['e', ev]); return; }
     const src = ev.src === 'jup' ? 'j' : 'd', i = mi(ev.m), key = i + src, p = prev.get(key);
     const body = Object.assign({}, ev); delete body.m; delete body.id; delete body.type;
@@ -123,6 +129,19 @@ function* decode(files) {
           prev.set(key, { m, ev: JSON.parse(enc(ev), REV) });
           yield { k: 'event', ev: Object.assign(ev, { id: `${x[0]}:${m}:${ev.at}`, type: 'snapshot' }) };
           break;
+        }
+        case 'T': {
+          const m = mints[x[1]]; if (!m) break;
+          const ev = { type: 'tape', at: x[2], m, slot: x[3], b: x[4], s: x[5], q: x[6], u: x[7], vs: x[8], vt: x[9] };
+          if (x[10]) ev.cr = x[10];
+          yield { k: 'event', ev }; break;
+        }
+        case 'C': {
+          const m = mints[x[1]]; if (!m) break;
+          const ev = { type: 'curve', at: x[2], m, slot: x[3], done: x[8] === 1, src: x[9] };
+          if (x[4] != null) { ev.vs = x[4]; ev.vt = x[5]; ev.rs = x[6]; ev.rt = x[7]; }
+          if (x[10]) ev.cr = x[10];
+          yield { k: 'event', ev }; break;
         }
         case '=': {
           const key = x[1] + x[2], p = prev.get(key);

@@ -32,7 +32,9 @@ server/                 the Meme Sniper server (Node 22, no dependencies)
   v11/                  the honest paper engine beside the legacy bots (audit Section E): engine.js (pure, event-driven),
                         runtime.js (polling, validation, quotes, RugCheck reports), market/features/gates/model/fees/risk,
                         strategies.js (E0 = legacy rules with honest timing, HOLD), v2.js + thesis.js (V2 strategies A/B/C,
-                        LOCKED v2.0), narrative.js (social = unavailable, claims unverified), record.js (input recording + exact replay)
+                        LOCKED v2.0), narrative.js (social = unavailable, claims unverified), record.js (input recording + exact replay),
+                        tape.js + tapestate.js (the trade tape: every trade of up to 40 curve coins from the public Solana RPC,
+                        websocket logs per bonding curve + getMultipleAccounts; data only, no locked rule reads it)
   tools/                v11_replay.js (replay recorded inputs exactly), v11_ablation.js (ablations and baselines)
 dashboard/              the web page (one self-contained HTML file)
   page.html style.css engine.js meme.js ui.js sniper_ui.js v11_ui.js (the v11 tab) research.json
@@ -70,7 +72,10 @@ the page's local mode and the server run identical code.
   reached the server.
 - **Data sources and limits:** Jupiter tokens v2 (new coins, audit), DexScreener (market caps, live prices),
   RugCheck, GeckoTerminal (1-minute OHLCV, free API: keep it near 8 calls/min, the lane adapts on 429), Coinbase
-  (SOL/USD, BTC, meme coins). GeckoTerminal wants whole-second timestamps.
+  (SOL/USD, BTC, meme coins), the public Solana RPC (tape lane: read-only websocket logs + getMultipleAccounts; works from
+  a GitHub runner, not from a browser or this container). GeckoTerminal wants whole-second timestamps.
+- **Probing an API from a runner without touching `main`:** push a script + workflow to branch `probe-src` and dispatch
+  `probe.yml` with `ref=probe-src` (inputs.urls = "script.js url..."); the output lands on branch `probe`.
 - **Decisions use final candles only** (GeckoTerminal 1-minute, `include_empty_intervals=true`); live prices only mark
   positions and decide which coins need candles. So a gap in running time never changes a trade: watched and held coins
   are replayed from candles. Launches during a gap are not scanned.
@@ -96,22 +101,22 @@ Deploy = push to `main`: the dashboard workflow publishes the page, and the runn
 
 ## Current work
 
-Implementing the Oct 21 audit (Section E, phases 0-5, tests T01-T20): plan in `docs/v11-plan.md`, status in
-`docs/PROGRESS.md`. Resume from PROGRESS.md. Phases 0-4 are done; V2 strategies A/B/C are locked (v2.0, Oct 21 12:00 PM
-ET, `research/v2_protocol.md`) and run forward on the server. Phase 5: collect data, run the ablations on the recorded
-inputs, write `docs/v11-report.md`. The server sim also checks v11: `V11 CAUSAL CHECKS OK` and `V11 REPLAY EXACT`.
+The Oct 21 audit (Section E, phases 0-5, tests T01-T20) is implemented: plan in `docs/v11-plan.md`, status and log in
+`docs/PROGRESS.md` (resume from there). Running forward on the server: v2.0 (A/B/C, locked Oct 21 12:00 PM ET,
+`research/v2_protocol.md`), E0 (legacy rules with honest timing), HOLD, the legacy bots, and from Oct 22 the trade tape
+(`server/v11/tape.js`) with v3.0 (A3/A3e/B3: v2.0's entries executed on the tape, locked Oct 22 3:20 PM UTC,
+`research/v3_protocol.md`). The server sim checks v11 too: `V11 CAUSAL CHECKS OK` and `V11 REPLAY EXACT` (it runs without
+the tape lane, which needs the real network; `server/tests/v11_tape.test.js` and `v11_v3.test.js` cover it).
 
-## Status (Oct 21 2026, 12:15 PM ET)
+## Status (Oct 22 2026, 11:20 AM ET)
 
-- Server live since 4:19 AM ET (journal start); natural handovers work (first at 10:55 AM ET). v11 runs beside the legacy
-  bots since 7:10 AM ET; V2 strategies A/B/C since 12:12 PM ET (commit 3939acf). A bought its first coin within a minute.
-- Legacy bots so far: none profitable (U30 about -2 SOL over 4 trades). Results live on the page (v11 tab compares E0,
-  V2, HOLD and the legacy bots).
-- BTC side (21 bots since Oct 16 8 PM ET, the Meme Coin Trader, the Solana Meme Trader) runs in the page by replaying
-  Coinbase candles from fixed start times; nothing to run on a server. Results in `docs/PROJECT_NOTES.md`.
-- Next: (1) after the next run boundary, download `v11-inputs/` and confirm `V11 REPLAY EXACT` on real data;
-  (2) once there are 5+ days and 30+ V2 trades per strategy, run `server/tools/v11_ablation.js` per
-  `research/v2_protocol.md` (first 60% choose, last 40% judge) and fill `docs/v11-report.md`; v2.1 candidates to test that
-  way (not applied): cap the volatility multiplier in the structure family (a 40%/min coin never flags), skip entries
-  after a single-minute spike (DOGGO was bought +61% in its last minute); (3) legacy research per Amendments 3-5 at 1,000
-  records; (4) the stray branches `data-test` and `probe` can be deleted.
+- Server live since Oct 21 4:19 AM ET; natural handovers every 5 h 45 min; exact replay verified on real data across every
+  handover so far. state.json about 1.2 MB (watch it).
+- Nothing is profitable yet. Since the 11.1 start (Oct 21 4:14 PM ET, about 19 h): A -1.48 SOL over 62 trades, B -0.16
+  over 20, C -0.19 over 1; E0 and the legacy bots red; HOLD flat. Biggest leaks: loss limits filling at -20% to -40%
+  between 12 s price checks, and rugs (-84% to -92%). v3 targets exactly those.
+- Next: (1) after the v3 deploy, check the tape on the page (live, coins followed, trades) and the fill model check
+  (median gap under 2%); verify exact replay across the next handover with tape inputs; (2) on Oct 26 after 20:14 UTC run
+  the pre-registered v2.1 study (`research/v2_protocol.md` section 5) with `server/tools/v11_ablation.js`; (3) v3 needs
+  30 trades per account and 5 days before any claim; (4) the stray branches `data-test` and `probe` can be deleted
+  (`probe-src` holds the RPC probes, `v3-lock` the v3 lock).

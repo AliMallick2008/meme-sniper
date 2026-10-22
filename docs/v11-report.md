@@ -16,6 +16,8 @@ claims an edge before the evidence rules in `research/v2_protocol.md` are met.
 | 5 | Recording of every engine input with exact replay, ablation and baseline tool, v11 tab, this report | `record.js`, `server/tools/`, `dashboard/v11_ui.js` |
 | 11.1 | Jupiter-first prices with data times after measuring DexScreener's lag; 11.0 accounts archived, all restarted | `market.js`, `engine.js` |
 | E0 rev 2 | E0 follows the legacy bots' own watchlists (6 slots, swaps) via a `legacy_watch` event; only E0 restarted | `strategies.js`, `runtime.js` |
+| Tape | Every trade of up to 40 curve coins from the public Solana RPC (trader, side, amounts, reserves after it, creator) and exact curve states; data only for v2.0 and E0 | `tape.js`, `tapestate.js` |
+| v3.0 | A3, A3e, B3: v2.0's entries on live-tape coins, curve fills at decision + 2 s, curve marks, reviews after every tape observation; A3e adds creator-sell and 20%-in-10-s exits; fill model check against Jupiter quotes | `v3.js`, `engine.js`, `research/v3_protocol.md` |
 
 Acceptance tests T01-T20: `node --test server/tests/*.test.js` (T01 T02 T03 T10 T11 T12 T14 T15 in phase 1, T04 T07 T13
 T17 T18 T20 in phase 2, T05 T06 T16 in phase 3, T08 T09 T19 in phase 4), plus the recording replay test. The server sim
@@ -34,8 +36,15 @@ the live v11 state exactly across restarts.
 | RugCheck | `api.rugcheck.xyz/v1/tokens/<mint>/report/summary` (legacy) and `/report` (v11) | danger flags; creator balance, top holders, known AMM accounts | report without `token.supply`/`topHolders` or for another mint is invalid; up to 3 tries per coin |
 | Coinbase | `api.exchange.coinbase.com/products/SOL-USD/ticker` | SOL/USD | v11 only looks backward; none within 5 min = unknown (T12) |
 | GeckoTerminal | 1-minute OHLCV | legacy bots and the legacy research recorder only | lane adapts on 429 (about 6 calls/min from a GitHub runner) |
+| Solana public RPC (tape lane, from Oct 22) | `api.mainnet-beta.solana.com`: websocket `logsSubscribe` (mentions = one bonding curve) and `getMultipleAccounts` | every trade of up to 40 curve coins (held and ordering first, then the fast list): trader, side, SOL, tokens, reserves after it, creator; exact curve state every 2 s. Data only until a strategy is locked to use it | failed transactions skipped (86% of those touching busy curves); a dropped socket reconnects with backoff and is recorded as tape down; polling fills any gap; a socket silent for 5 minutes or not open within 20 s is replaced |
 
-Not used: the Solana public RPC (403), X and Telegram (no approved API).
+Not used: X and Telegram (no approved API). The Solana public RPC answered 403 from a browser but works from the server.
+
+**Curve variants (Oct 22 2026):** 64 of 99 pump.fun coins trading in a 20 s sample started at the classic 30 virtual SOL;
+the others started anywhere from about 1 to 830 SOL (17 more were quoted in something other than SOL). Every curve had
+the same 279.9M virtual-only tokens. The reserve model in `model.js` assumes the classic curve, so its impact estimates
+and the "migrating" threshold (410.9 SOL market cap) are wrong for the others; Jupiter quotes (all fills) and the tape's
+reserves are exact.
 
 **Measured data lag (live, Oct 21 2026):** for pump.fun coins DexScreener's `priceUsd` lags Jupiter's price by a median
 46 s (p10 14 s, p90 107 s, from 192 DexScreener price changes matched to the Jupiter price with the same value); 17% of
@@ -71,6 +80,17 @@ Forward paper from v2.0's start (Oct 21 2026, about 12:20 PM ET). To be filled f
 Report per account: trades, wins, net SOL and USD, profit factor, max drawdown from marks, worst day, exits by reason,
 funnel, decision age, quote-to-fill age; compared with HOLD, E0 and the legacy bots. Minimum 30 closed trades and 5 days
 per strategy before any statement about edge.
+
+Interim snapshot (not evidence of anything; under the minimums), Oct 22 2026 11:20 AM ET, engine 11.1 accounts since
+Oct 21 4:14 PM ET (about 19 h):
+
+| Account | Value (SOL) | Trades | Wins |
+|---|---|---|---|
+| A | 8.522 | 62 | 22 |
+| B | 9.844 | 20 | 7 |
+| C | 9.806 | 1 | 0 |
+| HOLD | 10.000 | 0 | 0 |
+| E0 (7 accounts) | 6.12 to 9.82 | 0 to 31 | |
 
 ## 6. What cannot be verified here
 

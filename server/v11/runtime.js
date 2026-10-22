@@ -7,6 +7,7 @@ const zlib = require('zlib');
 const { createEngine } = require('./engine.js');
 const REC = require('./record.js');
 const NARR = require('./narrative.js');
+const TAPE = require('./tape.js');
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const JUP = 'https://lite-api.jup.ag';
 
@@ -84,10 +85,19 @@ function fromQuote(q) {
   return { valid: true, ok: true, inAmount: inA, outAmount: outA, impactPct: num(q.priceImpactPct), route, venue, slot: q.contextSlot || null };
 }
 
-function createRuntime({ core, clock, log, store, run, sha }) {
+// the fill model check (research/v3_protocol.md): Jupiter quotes vs the curve model at the same moment, as quantiles
+function qcSummary(q) {
+  if (!q || !q.gaps || !q.gaps.length) return null;
+  const g = q.gaps.map(x => x[1]).sort((a, b) => a - b), at = k => g[Math.min(g.length - 1, Math.floor(k * g.length))];
+  return { n: q.n, recent: g.length, p10: at(0.1), p50: at(0.5), p90: at(0.9), absMedian: q.gaps.map(x => Math.abs(x[1])).sort((a, b) => a - b)[g.length >> 1] };
+}
+function createRuntime({ core, clock, log, store, run, sha, tape: tapeOpt }) {
   const now = () => clock.now();
   const eng = createEngine();
   const rec = REC.recorder();          // every engine input, in order: replayable exactly (record.js)
+  // the tape lane (public Solana RPC, read-only): off in the simulator (tape: false) or with V11_TAPE=0
+  const tape = tapeOpt === false || process.env.V11_TAPE === '0' ? null
+    : TAPE.createTape(Object.assign({ now, log, ingest: ev => ingest(ev) }, tapeOpt || {}));
   let events = [], evH = 0, part = 0, inH = Math.floor(now() / 3600e3), inStart = now(), inPart = 0, lastSol = null, started = false, urgentFlag = false, saveN = 0;
   const stats = { dex: 0, jup: 0, quotes: 0, quoteFails: 0, invalid: 0, flushed: 0, inLines: 0, inBytes: 0, fast: 0, slow: 0, dead: 0 };
 
@@ -245,10 +255,12 @@ function createRuntime({ core, clock, log, store, run, sha }) {
         rc: c.rc ? { reqAt: c.rc.reqAt, at: c.rc.at, valid: c.rc.valid, danger: (c.rc.risks || []).filter(r => r[1] === 'danger').map(r => r[0]), sn: c.rc.sn } : null, invalid: c.invalid,
         rcr: c.rcr ? { at: c.rcr.at, valid: c.rcr.valid, devPct: c.rcr.devPct, how: c.rcr.devHow, top10: c.rcr.top10 } : null,
         mq: c.mq ? { at: c.mq.at, ok: c.mq.ok, impact: c.mq.impact, err: c.mq.err } : null, routeLostAt: c.routeLostAt || null, deadAt: c.deadAt || null,
+        tp: c.tp ? { n: c.tp.n, first: c.tp.first, cr: c.tp.cr, last: c.tp.last, done: c.tp.done, crSold: c.tp.crSold / 1e6, crSellAt: c.tp.crSellAt } : null,
         dossier: NARR.dossier(c, S.crosses, at, { approved: false }) }; }
     const log = S.log.filter(e => !/^(QuoteIgnored|DataInvalid)$/.test(e.type)).slice(-80).map(e => e.type === 'EligibilityDecided' ? Object.assign({}, e, { gates: undefined, failed: (e.gates || []).filter(g => g[1] !== 'pass').map(g => g[0]) }) : e);
     return { v: S.v, startedAt: S.startedAt, upgradedAt: S.upgradedAt || null, archive: S.archive || [], lastAt: S.lastAt, run: S.run, halted: S.halted, gaps: S.gaps.slice(-20), lastFeedAt: S.lastFeedAt,
-      accts: Object.values(S.accts).map(acct), coins, log, stats };
+      accts: Object.values(S.accts).map(acct), coins, log, stats,
+      tape: tape ? Object.assign({}, tape.stats, { following: tape.desired.size, state: S.tape || null }) : null, qc: qcSummary(S.qc) };
   }
   async function flush(force, put) {
     const h = Math.floor(now() / 3600e3);
@@ -278,7 +290,8 @@ function createRuntime({ core, clock, log, store, run, sha }) {
     L(pollJup, 12000, 'v11-jup');
     L(pollRcReports, 5000, 'v11-rcreport');
     L(async () => { tick(); }, 5000, 'v11-tick');
+    if (tape) tape.start(L, () => eng.tapePlan(now()));
   }
-  return { hooks, load, start, tick, save, committed, view, flush, urgent, engine: eng, stats, recorder: rec };
+  return { hooks, load, start, tick, save, committed, view, flush, urgent, engine: eng, stats, recorder: rec, tape };
 }
 module.exports = { createRuntime, fromDex, fromJup, fromQuote, fromRcReport };

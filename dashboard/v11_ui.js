@@ -16,7 +16,7 @@ const V11_UI = (() => {
   const cls = v => v > 1e-9 ? 'up' : v < -1e-9 ? 'down' : 'flat';
   const age = s => !isFinite(s) ? '–' : s < 60 ? Math.max(0, Math.round(s)) + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm' : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
   const short = m => m ? m.slice(0, 4) + '…' + m.slice(-4) : '';
-  const COLOR = { A: '--c-swing', B: '--c-half', C: '--c-lev', HOLD: '--c-hold', 'E0-U': '--c-snipe', 'E0-U2': '--l1', 'E0-U30': '--l3', 'E0-T25': '--l2', 'E0-D55': '--l4', 'E0-GRN': '--l5', 'E0-STR': '--l6' };
+  const COLOR = { A: '--c-swing', B: '--c-half', C: '--c-lev', A3: '--c-mtf', A3e: '--c-futb', B3: '--l8', HOLD: '--c-hold', 'E0-U': '--c-snipe', 'E0-U2': '--l1', 'E0-U30': '--l3', 'E0-T25': '--l2', 'E0-D55': '--l4', 'E0-GRN': '--l5', 'E0-STR': '--l6' };
   const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const REASON = { tp: 'target', sl: 'stop', time: 'time limit', thesis: 'thesis broken', emergency: 'emergency', risk: 'loss limit', stagnation: 'no progress', trail: 'profit protection' };
 
@@ -31,8 +31,13 @@ const V11_UI = (() => {
     const now = Date.now(), feedAge = (now - (S.lastFeedAt || 0)) / 1000, saveAge = srv ? (now - srv.t) / 1000 : NaN;
     const stale = S.halted || feedAge > 120 || !(saveAge < 600);
     const why = S.halted ? S.halted.why : feedAge > 120 ? `no fresh market data for ${age(feedAge)}` : !(saveAge < 600) ? `the server's last save is ${age(saveAge)} old` : '';
+    // the trade tape (public Solana RPC): every trade of the coins that matter, with exact curve reserves (data only for now)
+    const tp = S.tape;
+    const qc = S.qc, pc1 = v => (v * 100).toFixed(1) + '%';
+    const tape = (!tp ? '' : tp.up ? ` · trade tape live: ${tp.following} coins, ${Number(tp.trades || 0).toLocaleString('en-US')} trades this run` : ` · trade tape down${tp.state && tp.state.why ? ' (' + tp.state.why + ')' : ''}`) +
+      (qc ? ` · curve fill model vs Jupiter quotes: median gap ${pc1(qc.p50)} (10-90%: ${pc1(qc.p10)} to ${pc1(qc.p90)}, ${qc.n} quotes)` : '');
     return { pill: stale ? 'Incomplete data' : 'Forward paper', kind: stale ? 'wait' : 'in', why,
-      line: `Engine ${esc(S.v)}${S.upgradedAt ? ` · accounts since ${fDT(S.upgradedAt)} ET` : ` · running since ${fDT(S.startedAt)} ET`} · server run ${esc(S.run || '–')} · saved ${age(saveAge)} ago · newest market data ${age(feedAge)} old · ${S.gaps.length} coverage gap${S.gaps.length === 1 ? '' : 's'}` };
+      line: `Engine ${esc(S.v)}${S.upgradedAt ? ` · accounts since ${fDT(S.upgradedAt)} ET` : ` · running since ${fDT(S.startedAt)} ET`} · server run ${esc(S.run || '–')} · saved ${age(saveAge)} ago · newest market data ${age(feedAge)} old · ${S.gaps.length} coverage gap${S.gaps.length === 1 ? '' : 's'}${tape}` };
   }
 
   // ------------------------------------------------------------------ render
@@ -218,6 +223,7 @@ const V11_UI = (() => {
         <dt>Social attention</dt><dd>${esc(d.attention ? d.attention.status : 'unavailable')}: ${esc(d.attention ? d.attention.why : 'no approved data source')}</dd>
         <dt>Claims in its metadata</dt><dd>${claims.length ? claims.map(x => `${esc(x.label)}${x.url ? ` <span class="mono">${esc(x.url)}</span>` : ''}: <b>${esc(x.status)}</b>`).join('<br>') : 'none'}<div class="faint">Anyone can put any link in a token's metadata; it is not checked against the account or site.</div></dd>
         <dt>Name cluster</dt><dd>${d.nameCluster ? esc(d.nameCluster.note) : '–'}. Not social proof.</dd>
+        <dt>Trade tape</dt><dd>${c.tp ? `${Number(c.tp.n).toLocaleString('en-US')} trades seen since ${fDT(c.tp.first)} ET${c.tp.last ? `, last curve price ${(c.tp.last.ps * 1e9).toFixed(1)} SOL market cap` : ''}. Creator wallet <span class="mono">${esc(c.tp.cr || 'unknown')}</span>${c.tp.crSold > 0 ? `: <b class="down">sold ${c.tp.crSold.toFixed(3)} SOL</b> (last ${fT(c.tp.crSellAt)} ET)` : ': no sale seen'}${c.tp.done ? '. Curve complete (graduating).' : '.'}` : 'not followed (only coins near a decision get the tape)'}</dd>
       </dl>`;
   }
   function onShow() { render(); if (chart) setTimeout(() => chart.timeScale().fitContent(), 50); }

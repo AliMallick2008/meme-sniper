@@ -66,3 +66,49 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   research/v2_protocol.md section 5 (5 days of 11.1 data, one-change grid, 60/40 split, pick and judge rules); research-
   only switches added (inert in v2.0). v11 tab: "Profit by day" table (the owner's goal: green days).
   Scheduled check-ins: Oct 22 03:05 UTC (overnight health + replay), then ~13:00 UTC (morning summary).
+- Oct 21 ~9:30 PM ET (01:30 UTC Oct 22): exact replay also verified across the 20:56 and 21:01 UTC handovers
+  (463d34a -> 6295463 -> e7db7df, 274k events). Research branch 16.5 MB; v11 inputs about 1.2-1.6 MB/h gzipped.
+  Forward since the 11.1 start (20:14 UTC), at 01:23 UTC: A 8.268 SOL (25 trades, 7 wins; exits: trail 7, loss limit
+  17, stagnation 1; three rugs at -84% to -92%; loss-limit exits filled at -15% to -41% because a coin can fall a long
+  way between 12 s price checks), B 9.583 (10 trades, 1 win), C no trade; E0 (since 20:30) all under 10; legacy bots U
+  10.000, U2 8.633, U30 7.967, T25 7.909, D55 8.076, GRN 10.010, STR 9.306. v2.0 unchanged (locked).
+- Oct 21 ~10:00 PM ET (02:00 UTC Oct 22): the trade tape. Probes from a GitHub runner (branch probe-src, read-only) showed the
+  public Solana RPC answers there (it had looked blocked only from a browser): getMultipleAccounts in 26 ms (p50), and a
+  websocket with one logs subscription per bonding curve delivers every trade (pump.fun TradeEvent: trader, side, SOL,
+  tokens, the curve's reserves after it, the creator). 86% of the transactions touching busy curves fail (bot spam) and
+  are skipped. Finding: not every curve starts at 30 virtual SOL any more (64 of 99 coins in a 20 s sample did; others
+  from about 1 to 830 SOL), so the classic-curve model misprices the rest. New: `server/v11/tape.js` (the lane: up to 40
+  curves, held and ordering coins first, then the fast list; polling every 2 s fills gaps and reports completion) and
+  `server/v11/tapestate.js` (per-coin trades for 15 minutes, exact price, creator sells, window features). Data only:
+  no v2.0 or E0 rule reads it (tests check their prices never come from the tape). Recorded as compact 'T'/'C' lines;
+  replays exactly. The real module ran 90 s on a runner on the 25 busiest curves: 1,378 trades, no decode misses, no
+  reconnects, recording about 1.1 MB/h gzipped. The simulator runs without the lane (real network, real clock); its
+  own tests use recorded fixtures and a fake websocket (40 tests pass).
+- Oct 22 11:20 AM ET (15:20 UTC): the overnight check (its scheduled reminder reached this session 12 h late). Server
+  healthy all night: natural handovers at 02:47, 08:32 and 14:17 UTC (3 s each), no coverage gap, lanes clean
+  (Jupiter 1 failure in this run). Exact replay verified across all three with the deployed commit (e7db7df, 987k events,
+  12.9k ticks). Recording about 1.15 MB/h gzipped; research branch about 33 MB. state.json 1.16 MB (legacy journal coins
+  616 KB, v11 view 436 KB): watch it. Forward since the 11.1 start (20:14 UTC Oct 21, about 19 h): A 8.522 SOL (62
+  trades, 22 wins; exits: 15 loss limit, 14 profit protection, 1 thesis in the last 30), B 9.844 (20 trades, 7 wins), C
+  9.806 (1 trade), HOLD 10; E0 all under 10 (E0-U30 6.12); legacy U2 7.79, U30 7.97, T25 7.07, D55 8.08, GRN 7.26,
+  STR 9.31, U 10 (holding "ok" since Oct 21 4:30 AM: its v10 stop sits under the curve floor, so it can never trigger).
+- Oct 22 11:20 AM ET: v3.0 locked (research/v3_protocol.md, pushed to branch `v3-lock` at 15:17 UTC before the code was
+  finished; Amendment 1 at 15:21 UTC, before the start: A3e's 10-second drop counts the price the window started at).
+  Accounts A3 and A3e (v2.0's A) and B3 (v2.0's B) take v2.0's entries on coins whose tape is live, fill against the
+  curve as last received at or before decision + 2 s, are valued on the exact curve and reviewed after every tape
+  observation; A3e also exits at once if the creator sells or the price drops 20% inside 10 s. Engine: `v3.js`, curve
+  fills (`curveFills`), curve marks, `tapeReview`, `tape_sub` events (a coin's subscription confirmed or ended: the
+  tape counts as live only after a curve state received since then), and the fill model check (`S.qc`: every Jupiter
+  quote on a live-tape coin against the curve model). Tests (7 new, 47 total): A3 buys what A buys at the same tick and
+  fills at the curve state of decision + 2 s; v2.0 and E0 trade identically with or without the tape and the v3
+  accounts; a crash is sold on a tape observation before the next tick; A3e's emergencies; a tape outage falls back to
+  quotes and blocks new entries; replay exact.
+  Verified before the deploy: 47 tests pass; server sim ALL BOTS MATCH, V11 REPLAY EXACT, V11 CAUSAL CHECKS OK (the sim
+  runs without the tape); page check SERVER PAGE OK (36 GitHub API calls/h). The final tape module ran once more on a
+  runner against the real RPC (probe-src). On a (re)subscription the next poll always sends a curve state, so a quiet
+  coin's tape becomes live within about 2 s. Saves keep 15 s of tape trades per coin (at most 30).
+  Last runner probes of the final module (Oct 22, 15:42-15:52 UTC): at busy hours the public RPC dropped the websocket
+  every 10-20 s on some runners (code 1006, no reason; 90% up with 0.5 s backoff), and not at all on others (0 drops in
+  150 s, 4,618 trades on the 30 busiest curves, recording about 2 MB/h). A connection that lived 5 s or more is now
+  replaced at once, the coins resubscribe, and an immediate poll makes their tape live again within about a second.
+  Polls never failed. Each drop and its close code is recorded (tape_status), so tape uptime can be measured live.
