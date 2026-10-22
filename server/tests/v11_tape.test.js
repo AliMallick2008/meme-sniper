@@ -47,10 +47,10 @@ function fakeNet() {
   return { FakeWS, sockets, posts, fetchImpl, setAnswer: f => { answer = f; } };
 }
 
-test('the lane subscribes per curve, turns trades into tape events, ignores failed transactions, reconnects, fills gaps by polling', async () => {
+test('one connection: subscribes per curve, turns trades into tape events, ignores failed transactions, reconnects, fills gaps by polling', async () => {
   const net = fakeNet(), got = [];
   let t = T0;
-  const tape = T.createTape({ now: () => t, ingest: ev => got.push(ev), WS: net.FakeWS, fetch: net.fetchImpl, url: 'https://rpc.test' });
+  const tape = T.createTape({ now: () => t, ingest: ev => got.push(ev), WS: net.FakeWS, fetch: net.fetchImpl, url: 'https://rpc.test', conns: 1 });
   const n = FX.notification;
   tape.want([{ m: n.m, bc: n.bc }]);
   assert.strictEqual(net.sockets.length, 1);
@@ -61,25 +61,30 @@ test('the lane subscribes per curve, turns trades into tape events, ignores fail
   const sub = ws.sent.find(x => x.method === 'logsSubscribe');
   assert.deepStrictEqual(sub.params, [{ mentions: [n.bc] }, { commitment: 'processed' }], 'one logs subscription per bonding curve');
   ws.recv({ jsonrpc: '2.0', id: sub.id, result: 4242 });
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => [e.m, e.on]), [[n.m, true]], 'the subscription is confirmed to the engine');
   t += 700;
   const msg = JSON.parse(JSON.stringify(n.msg)); msg.params.subscription = 4242;
+  const sig = (m, k) => { const x = JSON.parse(JSON.stringify(m)); x.params.result.value.signature = 'sig' + k; return x; };
   ws.recv(msg);
   const tr = got.filter(e => e.type === 'tape');
   assert.strictEqual(tr.length, 1, 'one TradeEvent in that transaction');
   assert.deepStrictEqual(tr[0], { type: 'tape', at: T0 + 700, m: n.m, slot: 459856853, b: 0, s: 95823, q: 120801356, u: 'BwWK17cb', vs: 296502, vt: 686060571, cr: 'XvmH3d7V' });
-  // the creator is sent once per coin and run
+  // the same transaction again is not a second trade; another one is, and the creator is sent once per coin and run
   ws.recv(msg);
+  assert.strictEqual(got.filter(e => e.type === 'tape').length, 1);
+  assert.strictEqual(tape.stats.dupes, 1);
+  ws.recv(sig(msg, 2));
   assert.strictEqual(got.filter(e => e.type === 'tape')[1].cr, undefined);
   // a failed transaction moved nothing
-  const bad = JSON.parse(JSON.stringify(msg)); bad.params.result.value.err = { InstructionError: [3, { Custom: 6003 }] };
+  const bad = sig(msg, 3); bad.params.result.value.err = { InstructionError: [3, { Custom: 6003 }] };
   ws.recv(bad);
   assert.strictEqual(got.filter(e => e.type === 'tape').length, 2);
   assert.strictEqual(tape.stats.failedTx, 1);
   // notifications for a subscription we do not know are dropped
-  const stray = JSON.parse(JSON.stringify(msg)); stray.params.subscription = 999; ws.recv(stray);
+  const stray = sig(msg, 4); stray.params.subscription = 999; ws.recv(stray);
   assert.strictEqual(got.filter(e => e.type === 'tape').length, 2);
 
-  // polling: the curve account becomes a curve event only when it changed
+  // polling: the curve account becomes a curve event only when it changed (the first poll after a subscription always)
   net.setAnswer(b => b.method === 'getMultipleAccounts' ? { jsonrpc: '2.0', id: 1, result: { context: { slot: 459856858 }, value: [FX.accounts.result.value[0]] } } : null);
   t += 1000; await tape.poll();
   const cv = got.filter(e => e.type === 'curve');
@@ -89,9 +94,10 @@ test('the lane subscribes per curve, turns trades into tape events, ignores fail
   assert.strictEqual(got.filter(e => e.type === 'curve').length, 1, 'an unchanged curve is not sent again');
   assert.deepStrictEqual(net.posts[0].params[0], [n.bc]);
 
-  // the coin is no longer wanted: unsubscribed
+  // the coin is no longer wanted: unsubscribed, and the engine is told
   tape.want([]);
   assert.ok(ws.sent.some(x => x.method === 'logsUnsubscribe' && x.params[0] === 4242));
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true, false]);
   // a dropped connection: status down, then a reconnect after the backoff with every wanted curve again
   tape.want([{ m: n.m, bc: n.bc }]);
   ws.close();
@@ -119,6 +125,49 @@ test('the lane subscribes per curve, turns trades into tape events, ignores fail
   const many = Array.from({ length: 60 }, (_, i) => ({ m: FX.sol[i % FX.sol.length].mint, bc: 'Curve' + i }));
   tape.want(many);
   assert.strictEqual(tape.desired.size, T.TAPE_MAX);
+});
+
+test('two connections: the engine sees their union; a drop of one changes nothing, a trade on both counts once', () => {
+  const net = fakeNet(), got = [];
+  let t = T0;
+  const tape = T.createTape({ now: () => t, ingest: ev => got.push(ev), WS: net.FakeWS, fetch: net.fetchImpl, url: 'https://rpc.test' });
+  const n = FX.notification, want = () => tape.want([{ m: n.m, bc: n.bc }]);
+  want();
+  assert.strictEqual(net.sockets.length, 1, 'the second connection starts 5 s later');
+  t += 5000; tape.maintain();
+  assert.strictEqual(net.sockets.length, 2);
+  const [w0, w1] = net.sockets;
+  w0.open(); w1.open();
+  const conf = (w, id) => { const s = w.sent.find(x => x.method === 'logsSubscribe'); w.recv({ jsonrpc: '2.0', id: s.id, result: id }); };
+  conf(w0, 11); conf(w1, 22);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_status').map(e => e.up), [true], 'one up for the pair');
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true], 'one subscription for the pair');
+  const m0 = JSON.parse(JSON.stringify(n.msg)); m0.params.subscription = 11;
+  const m1 = JSON.parse(JSON.stringify(n.msg)); m1.params.subscription = 22;
+  t += 300; w1.recv(m1); t += 50; w0.recv(m0);
+  assert.strictEqual(got.filter(e => e.type === 'tape').length, 1, 'the same trade from both connections counts once');
+  assert.strictEqual(got.find(e => e.type === 'tape').at, T0 + 5300, 'from whichever came first');
+  // connection 0 drops after 6 s: nothing changes downstream, it comes back at once
+  t += 1000; w0.close();
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_status').map(e => e.up), [true]);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true]);
+  assert.strictEqual(net.sockets.length, 3, 'replaced at once');
+  assert.strictEqual(tape.stats.drops, 1);
+  // connection 1 drops while 0's replacement is not open yet: now the tape is down
+  w1.close();
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_status').map(e => e.up), [true, false]);
+  // the replacements open: up again, the coin subscribed again (once)
+  net.sockets[2].open(); conf(net.sockets[2], 33);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_status').map(e => e.up), [true, false, true]);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true, true]);
+  t += 600; tape.maintain();                         // connection 1 had lived 1.4 s: it waited for the backoff
+  assert.strictEqual(net.sockets.length, 4);
+  net.sockets[3].open(); conf(net.sockets[3], 44);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true, true], 'the second confirmation is not news');
+  // unwanted: one 'off' for the pair, both unsubscribed
+  tape.want([]);
+  assert.deepStrictEqual(got.filter(e => e.type === 'tape_sub').map(e => e.on), [true, true, false]);
+  assert.ok(net.sockets[2].sent.some(x => x.method === 'logsUnsubscribe' && x.params[0] === 33) && net.sockets[3].sent.some(x => x.method === 'logsUnsubscribe' && x.params[0] === 44));
 });
 
 // a coin in the engine with a tape: trades every 2 s, the creator sells once

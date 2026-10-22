@@ -112,3 +112,21 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   150 s, 4,618 trades on the 30 busiest curves, recording about 2 MB/h). A connection that lived 5 s or more is now
   replaced at once, the coins resubscribe, and an immediate poll makes their tape live again within about a second.
   Polls never failed. Each drop and its close code is recorded (tape_status), so tape uptime can be measured live.
+- Oct 22 11:55 AM ET (15:55 UTC): tape lane and v3.0 deployed (commit 7136323); the page published.
+- Oct 22 11:58 AM ET: v3.1 locked (research/v31_protocol.md, pushed to `v3-lock` at 15:57:56 UTC, before A4 existed in
+  code and before any v3 trade). A4 = A3 with entries only 8 to 20 minutes after the crossing. Training evidence: A's
+  60 forward trades under 11.1 split by minutes since the crossing (3-8 min: 34 trades, -5.04 SOL, 21% wins; 8-20 min:
+  26 trades, +3.38 SOL, 50% wins), and the archived 11.0 period the same way (15 early: -0.20, 20% wins; 8 late: +0.39,
+  62% wins). Other splits looked at in the same pass are listed in the protocol (one pick among several: the forward test
+  must survive that). Also from that table: A's 35 loss-limit exits averaged -31% against a 15% limit (worst -92%),
+  its 22 profit-protection exits +40%; at an exact -15% fill A would have been about +3 SOL instead of -1.7. That gap is
+  what v3's tape execution targets. Replay variant `A~late` added to the ablation tool (secondary check, data after the
+  lock only).
+- Oct 22 12:15 PM ET: tape v2 (two connections). Live since 15:59 UTC the first version dropped its websocket every
+  10-20 s on the production runner too (3 drops in its first 2 minutes). A runner A/B (two lanes, same coins, same time:
+  one sending a tiny request every 5 s, one silent) gave 14 drops in 180 s each, so the drops are the server's and do
+  not depend on client traffic. Now two connections carry the same subscriptions; a trade that arrives on both is passed
+  on once (by signature and curve), and the engine sees their union (up while either is; a coin subscribed while either
+  has it), so a single drop changes nothing downstream. Runner probe, 180 s, 30 busiest curves: union up 99.9% (one drop
+  per connection, at different times), 2,672 trades, 23,474 duplicate copies dropped, 1.6 MB/h recorded. 49 tests;
+  sim ALL BOTS MATCH, V11 REPLAY EXACT, V11 CAUSAL CHECKS OK; SERVER PAGE OK.

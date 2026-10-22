@@ -16,7 +16,7 @@ const V11_UI = (() => {
   const cls = v => v > 1e-9 ? 'up' : v < -1e-9 ? 'down' : 'flat';
   const age = s => !isFinite(s) ? '–' : s < 60 ? Math.max(0, Math.round(s)) + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm' : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
   const short = m => m ? m.slice(0, 4) + '…' + m.slice(-4) : '';
-  const COLOR = { A: '--c-swing', B: '--c-half', C: '--c-lev', A3: '--c-mtf', A3e: '--c-futb', B3: '--l8', HOLD: '--c-hold', 'E0-U': '--c-snipe', 'E0-U2': '--l1', 'E0-U30': '--l3', 'E0-T25': '--l2', 'E0-D55': '--l4', 'E0-GRN': '--l5', 'E0-STR': '--l6' };
+  const COLOR = { A: '--c-swing', B: '--c-half', C: '--c-lev', A3: '--c-mtf', A3e: '--c-futb', B3: '--l8', A4: '--c-day', HOLD: '--c-hold', 'E0-U': '--c-snipe', 'E0-U2': '--l1', 'E0-U30': '--l3', 'E0-T25': '--l2', 'E0-D55': '--l4', 'E0-GRN': '--l5', 'E0-STR': '--l6' };
   const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const REASON = { tp: 'target', sl: 'stop', time: 'time limit', thesis: 'thesis broken', emergency: 'emergency', risk: 'loss limit', stagnation: 'no progress', trail: 'profit protection' };
 

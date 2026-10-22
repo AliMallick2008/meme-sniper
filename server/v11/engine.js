@@ -483,7 +483,12 @@ function createEngine(opts = {}) {
   }
   function entry(A, at) {
     if (A.kind === 'e0') return ST.e0Entry(A, at, S.coins);
-    if (A.kind === 'v2') return V2.entry(A, at, A.tape ? liveCoins() : S.coins, fc, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol - 0.01, log);
+    if (A.kind === 'v2') {
+      let coins = A.tape ? liveCoins() : S.coins;
+      // v3.1 A4 (and the replay variant A~late): only coins at least minSinceMin minutes after their crossing
+      if (A.minSinceMin) coins = Object.fromEntries(Object.entries(coins).filter(([, c]) => at - c.xAt >= A.minSinceMin * 60000));
+      return V2.entry(A, at, coins, fc, A.cash - FEES.COSTS.networkFeeSol - FEES.COSTS.ataRentSol - 0.01, log);
+    }
     return null;
   }
   function review(A, c, at, f) {

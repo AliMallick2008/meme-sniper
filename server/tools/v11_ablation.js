@@ -35,6 +35,8 @@ function variants() {
     // the pre-registered v2.1 grid (research/v2_protocol.md section 5): one change at a time from v2.0
     for (const [suf, extra, what, cExtra] of grid(a.strat))
       out.push(Object.assign({}, a, { id: `${a.id}~${suf}`, exp: `${a.exp}~${suf}`, name: `${a.name} (${what})`, P: Object.assign({}, a.P, extra), C: Object.assign({}, a.C, cExtra || {}) }));
+    // research/v31_protocol.md secondary check (judge only on inputs recorded after its lock, Oct 22 15:58 UTC)
+    if (a.strat === 'A') out.push(Object.assign({}, a, { id: 'A~late', exp: `${a.exp}~late`, name: `${a.name} (entries 8+ minutes after the crossing: the v3.1 rule)`, minSinceMin: 8, P: Object.assign({}, a.P), C: Object.assign({}, a.C) }));
   }
   return out;
 }

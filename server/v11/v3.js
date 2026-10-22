@@ -3,6 +3,7 @@
      A3   v2.0's A, valued, reviewed and filled on the trade tape while it is live
      A3e  A3 plus two emergency exits from the tape: the creator sells, or a 20% drop inside 10 seconds
      B3   v2.0's B on the tape
+     A4   (v3.1) A3, entries only 8 to 20 minutes after the crossing
    Entries are v2.0's (v2.js) plus one requirement: the coin's tape is live. The tape mechanics (curve fills 2 s after
    the decision, curve marks, a review after every tape observation) are in engine.js; they apply only to accounts with
    `tape: true`. Rules are locked at LOCKED; a change is a new version beside this one, never an edit. */
@@ -10,6 +11,8 @@ const V2 = require('./v2.js');
 
 const VERSION = 'v3.0';
 const LOCKED = Date.UTC(2026, 9, 22, 15, 20, 0);   // Thu Oct 22 2026, 3:20 PM UTC (11:20 AM ET), research/v3_protocol.md
+const VERSION_31 = 'v3.1';
+const LOCKED_31 = Date.UTC(2026, 9, 22, 15, 58, 0); // Thu Oct 22 2026, 3:58 PM UTC (11:58 AM ET), research/v31_protocol.md
 const FILL_MS = 2000;                               // fills use the curve as last received at or before decision + 2 s
 const CRASH = { drop: 0.20, winMs: 10000 };         // A3e: 20% under the highest trade price of the last 10 s
 
@@ -20,14 +23,18 @@ const DEFS = {
     desc: 'A3, plus it sells at once if the coin\'s creator wallet sells anything after the buy, or if the price drops 20% inside 10 seconds.' },
   B3: { from: 'B', name: 'B3: Pullback Recovery on the tape',
     desc: 'The same rules as B, valued, reviewed and filled on the trade tape while it is live.' },
+  // v3.1 (research/v31_protocol.md): A3 with one change, entries only 8 to 20 minutes after the crossing
+  A4: { from: 'A', name: 'A4: Late Launch Momentum on the tape', minSinceMin: 8, version: VERSION_31, locked: LOCKED_31,
+    desc: 'A3, but only on coins 8 to 20 minutes after they crossed $7K. In the first forward day A\'s early entries lost and its late ones won; this tests that on new data.' },
 };
 
 function accounts() {
   const base = Object.fromEntries(V2.accounts().map(a => [a.id, a]));
   return Object.entries(DEFS).map(([id, d]) => {
     const b = base[d.from];
-    return Object.assign({}, b, { id, exp: `v11-${VERSION}/${id}`, version: VERSION, locked: LOCKED, name: d.name, desc: d.desc, tape: true, tapeEmergency: !!d.tapeEmergency,
-      P: Object.assign({}, b.P), C: Object.assign({}, b.C) });
+    const version = d.version || VERSION;
+    return Object.assign({}, b, { id, exp: `v11-${version}/${id}`, version, locked: d.locked || LOCKED, name: d.name, desc: d.desc, tape: true, tapeEmergency: !!d.tapeEmergency,
+      P: Object.assign({}, b.P), C: Object.assign({}, b.C) }, d.minSinceMin ? { minSinceMin: d.minSinceMin } : {});
   });
 }
 
@@ -47,4 +54,4 @@ function emergency(pos, c, at) {
   if (hi > 0 && ps && ps <= hi * (1 - CRASH.drop)) return `the price fell ${((1 - ps / hi) * 100).toFixed(0)}% inside 10 seconds`;
   return null;
 }
-module.exports = { VERSION, LOCKED, FILL_MS, CRASH, DEFS, accounts, emergency };
+module.exports = { VERSION, LOCKED, VERSION_31, LOCKED_31, FILL_MS, CRASH, DEFS, accounts, emergency };

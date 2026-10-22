@@ -143,3 +143,18 @@ test('v3 trading on the tape replays exactly from the recording', () => {
   const r = REC.replayExact([rec.take()], { createEngine: () => createEngine({ accounts: withV3 }) });
   assert.strictEqual(REC.firstDiff(REC.roundTrip(r.eng.save()), REC.roundTrip(e.save())), null);
 });
+
+test('A4 (v3.1) enters only 8 minutes or more after the crossing; A3 takes the early entry', () => {
+  // $8K at 3:00, then a steady climb to $12K at 12:00 with strong buying: a setup early and again late
+  const coin = { m: M, sym: 'FROGT', crossAt: T0, mcX: 7000, hiMc: 7000, mc: path([[0, 7000], [3, 8000], [12, 12000]]), flow: steps([[-1, buyFlow]]) };
+  const { S } = market({ coins: [coin], stopAt: min(12), accounts: withV3, extra: tapeFor(coin, min(12)) });
+  const a3 = ordersOf(S, 'A3', 'buy')[0], a4 = ordersOf(S, 'A4', 'buy')[0];
+  assert.ok(a3 && a3.reqAt < min(8), 'A3 bought early');
+  assert.ok(a4, 'A4 bought');
+  assert.ok(a4.reqAt >= min(8), `only from 8 minutes after the crossing (${(a4.reqAt - T0) / 60000} min)`);
+  assert.strictEqual(a4.mode, 'curve');
+  const A4 = S.accts.A4;
+  assert.strictEqual(A4.version, 'v3.1');
+  assert.strictEqual(A4.exp, 'v11-v3.1/A4');
+});
+
