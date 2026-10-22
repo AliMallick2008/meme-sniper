@@ -34,8 +34,22 @@ async function handover(why) {
   const r = await gh('POST', '/actions/workflows/sniper.yml/dispatches', { ref: 'main' });
   log(`asked for the next run (${why}): HTTP ${r.status}`);
 }
+/* a new commit on main hands over to the new code, but only when it changes what this process runs (server/ or the
+   workflow); docs, tools-only and page commits no longer interrupt the bots. Unknown (the compare call failed): hand over. */
+const RUNS_CODE = f => /^server\//.test(f) && !/^server\/(tools|tests)\//.test(f) || f === '.github/workflows/sniper.yml';
+let checked = { sha: null, changed: false };
 async function checkUpdate() {
-  try { const out = await git(['ls-remote', 'origin', 'refs/heads/main'], 30000); const sha = out.split(/\s/)[0]; return !!(SHA && sha && sha !== SHA); } catch (e) { return false; }
+  try {
+    const out = await git(['ls-remote', 'origin', 'refs/heads/main'], 30000); const sha = out.split(/\s/)[0];
+    if (!SHA || !sha || sha === SHA) return false;
+    if (checked.sha === sha) return checked.changed;
+    const r = await gh('GET', `/compare/${SHA}...${sha}`);
+    const files = r.status === 200 && r.j && Array.isArray(r.j.files) ? r.j.files.map(f => f.filename) : null;
+    const changed = !files || files.length >= 300 || files.some(RUNS_CODE);   // the API lists at most 300 files
+    checked = { sha, changed };
+    if (!changed) log(`main moved to ${sha.slice(0, 7)} without server changes (${files.length} files): no handover`);
+    return changed;
+  } catch (e) { return false; }
 }
 
 process.on('unhandledRejection', e => log('unhandled: ' + (e && e.stack || e)));

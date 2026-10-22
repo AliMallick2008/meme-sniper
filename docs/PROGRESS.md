@@ -130,3 +130,18 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
   has it), so a single drop changes nothing downstream. Runner probe, 180 s, 30 busiest curves: union up 99.9% (one drop
   per connection, at different times), 2,672 trades, 23,474 duplicate copies dropped, 1.6 MB/h recorded. 49 tests;
   sim ALL BOTS MATCH, V11 REPLAY EXACT, V11 CAUSAL CHECKS OK; SERVER PAGE OK.
+- Oct 22 12:21 PM ET: JAMESON. Crossed $7K at 16:00:52 UTC; A and A3 bought at 16:04 (about $20K market cap, A3 on the
+  curve at decision + 2 s); it completed its curve, graduated, and peaked at +1,463% for A. A sold by profit protection at
+  +1,004% (+8.54 SOL, Jupiter quote on the pool); A3 held to the 20-minute horizon, +1,259% (+10.71 SOL). A3e bought it too
+  but its 20%-in-10-s exit fired 2 s after the fill (-11%): one data point against that rule on launch-phase coins. A is
+  now +7.28 SOL realized since the 11.1 start (68 trades, 25 wins, profit factor 1.78; without JAMESON about -1.26).
+  `server/tools/v11_compare.js` (new) on the saved state: A's 38 loss-limit exits average -30.2%, 15.2 points past the
+  limit; its 27 profit-protection exits keep a median 57% of the peak gain. First tape-executed loss limit (A3e,
+  CRAWLR): -15.6%, 0.6 points past the limit. Fill model check: 14 Jupiter quotes vs the curve model, median gap 0.07%
+  (p90 3%). Tape on the server: each connection drops about every 10 s, the pair stayed up.
+- Watch: v11.json (the engine save on the data branch) is 3.2 MB: coins 1.4 MB (228 coins, about 6 KB each with the
+  tape), accounts 0.9 MB (trades accumulate), orders 0.8 MB (24 h). If it passes ~6 MB, keep the last few hundred trades
+  per account in the save with running totals for the rest.
+- run.js: a new commit on main now hands over only if it changes what the server runs (server/ outside tools and tests,
+  or the sniper workflow; checked with the compare API once per new commit). Docs, tools and page commits no longer
+  interrupt the bots or add replay boundaries.
