@@ -81,16 +81,24 @@ Report per account: trades, wins, net SOL and USD, profit factor, max drawdown f
 funnel, decision age, quote-to-fill age; compared with HOLD, E0 and the legacy bots. Minimum 30 closed trades and 5 days
 per strategy before any statement about edge.
 
-Interim snapshot (not evidence of anything; under the minimums), Oct 22 2026 11:20 AM ET, engine 11.1 accounts since
-Oct 21 4:14 PM ET (about 19 h):
+Interim snapshots (not evidence of anything; under the minimums). Engine 11.1 accounts since Oct 21 4:14 PM ET.
 
-| Account | Value (SOL) | Trades | Wins |
-|---|---|---|---|
-| A | 8.522 | 62 | 22 |
-| B | 9.844 | 20 | 7 |
-| C | 9.806 | 1 | 0 |
-| HOLD | 10.000 | 0 | 0 |
-| E0 (7 accounts) | 6.12 to 9.82 | 0 to 31 | |
+Oct 22 11:20 AM ET (about 19 h): A 8.522 SOL (62 trades, 22 wins), B 9.844 (20, 7), C 9.806 (1, 0), HOLD 10.000; E0
+6.12 to 9.82.
+
+Oct 22 12:25 PM ET (`server/tools/v11_compare.js` on the saved state), after JAMESON (+1,004% for A, +1,259% for A3):
+
+| Account | Trades | Wins | Net SOL | Profit factor | Loss-limit exits: average, past the limit | Profit protection: median share of the peak kept |
+|---|---|---|---|---|---|---|
+| A (v2.0) | 68 | 25 | +7.282 | 1.78 | 38: -30.2%, 15.2 points past | 27: 57% |
+| B (v2.0) | 20 | 7 | -0.156 | 0.91 | 8: -21.1%, 3.1 past | 6: 57% |
+| C (v2.0) | 2 | 1 | -0.065 | 0.66 | 1: -22.9% | 1: 46% |
+| A3 (v3.0) | 1 | 1 | +10.706 | | | |
+| A3e (v3.0) | 2 | 0 | -0.181 | | 1: -15.6%, 0.6 past | |
+| E0 (7 accounts) | 0 to 32 | | -3.884 to 0.000 | | | |
+
+A without JAMESON: about -1.26 SOL. Fill model check (Jupiter quotes vs the curve model at the same moment): 14 quotes,
+median gap 0.07%, p90 3%.
 
 ## 6. What cannot be verified here
 
