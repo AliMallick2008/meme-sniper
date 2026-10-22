@@ -1,0 +1,39 @@
+# Probe variant on the probe-src branch (dispatched with ref probe-src): read-only Solana public RPC checks from a
+# GitHub runner (HTTP reads, websocket slot/account/logs subscriptions). Results on the `probe` branch (probe.txt).
+# Paper only: no secrets, no wallets, no transactions.
+name: probe
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: space-separated public RPC URLs (https)
+        required: true
+permissions:
+  contents: write
+concurrency: probe
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: websocket probe
+        env:
+          RPCS: ${{ inputs.urls }}
+        run: |
+          timeout 200 node probe_ws.js > probe.txt 2>&1 || echo "exit $?" >> probe.txt
+          wc -c probe.txt
+      - name: save on the probe branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          git init -q out && cd out
+          git config user.name probe && git config user.email probe@users.noreply.github.com
+          cp ../probe.txt . && git add probe.txt && git commit -q -m "probe $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:refs/heads/probe
