@@ -78,7 +78,8 @@ function createTape(opts) {
   const now = opts.now, log = opts.log || (() => {}), ingest = opts.ingest;
   const url = opts.url || RPC_URL, WSImpl = opts.WS || (typeof WebSocket === 'function' ? WebSocket : null), fetchImpl = opts.fetch || (typeof fetch === 'function' ? fetch : null);
   const stats = { up: false, subs: 0, trades: 0, failedTx: 0, decodeMiss: 0, curves: 0, polls: 0, pollFails: 0, reconnects: 0, lastMsgAt: null, lastTradeAt: null, subErrors: 0, creatorMismatch: 0 };
-  let ws = null, wsUp = false, backoff = 0, reqId = 0, closing = false, retryAt = 0, openedAt = 0;
+  let ws = null, wsUp = false, backoff = 0, reqId = 0, closing = false, retryAt = 0, openedAt = 0, lastSentAt = 0;
+  const keepaliveMs = opts.keepaliveMs || 0;   // send a tiny request this often (0: never)
   const desired = new Map();     // bc -> { m, bc, mintBytes }
   const subs = new Map();        // bc -> { id (request), sub (subscription id) }
   const bySub = new Map();       // subscription id -> bc
@@ -87,7 +88,7 @@ function createTape(opts) {
   const crSent = new Set();      // coins whose creator was sent this run
 
   const status = (up, why) => { if (stats.up === up && !why) return; stats.up = up; ingest({ type: 'tape_status', at: now(), up, subs: subs.size, why: why || null }); };
-  function send(o) { try { if (ws && wsUp) { ws.send(JSON.stringify(o)); return true; } } catch (e) { /* the close handler reconnects */ } return false; }
+  function send(o) { try { if (ws && wsUp) { ws.send(JSON.stringify(o)); lastSentAt = now(); return true; } } catch (e) { /* the close handler reconnects */ } return false; }
   function subscribe(bc) {
     if (subs.has(bc)) return;
     const id = ++reqId; pendingReq.set(id, { bc, kind: 'sub' }); subs.set(bc, { id, sub: null });
@@ -212,6 +213,7 @@ function createTape(opts) {
   // replace a dead socket, reconnect when the backoff allows (called every second and from want)
   function maintain() {
     watchdog();
+    if (keepaliveMs && wsUp && now() - lastSentAt >= keepaliveMs) send({ jsonrpc: '2.0', id: ++reqId, method: 'getHealth' });
     if (!ws && !closing && desired.size && now() >= retryAt) connect();
   }
   // the same curves over HTTP every 2 s (at once after a (re)subscription): fills any gap in the logs, keeps the exact
