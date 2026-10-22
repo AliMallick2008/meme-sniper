@@ -31,13 +31,19 @@ function accounts() {
   });
 }
 
-// A3e: the creator sold after the entry, or the curve price is 20%+ under its highest trade price of the last 10 s
+/* A3e: the creator sold after the entry, or the curve price is 20%+ under the highest price the curve had in the last
+   10 s: every trade in that window, and the price it started the window at (the last trade before it), count
+   (Amendment 1, research/v3_protocol.md: a quiet coin dumped in one trade must count as a drop) */
 function emergency(pos, c, at) {
   const t = c.tp; if (!t) return null;
   if (t.crSellAt && t.crSellAt > pos.openAt && t.crSellAt <= at) return `the creator wallet (${t.cr}) sold after the buy`;
   const ps = t.last && t.last.ps;
   let hi = 0;
-  for (let i = t.tr.length - 1; i >= 0; i--) { const x = t.tr[i]; if (x[0] > at) continue; if (at - x[0] > CRASH.winMs) break; if (x[6] > hi) hi = x[6]; }
+  for (let i = t.tr.length - 1; i >= 0; i--) {
+    const x = t.tr[i]; if (x[0] > at) continue;
+    if (x[6] > hi) hi = x[6];
+    if (at - x[0] > CRASH.winMs) break;          // the last trade before the window: the price the window started at
+  }
   if (hi > 0 && ps && ps <= hi * (1 - CRASH.drop)) return `the price fell ${((1 - ps / hi) * 100).toFixed(0)}% inside 10 seconds`;
   return null;
 }

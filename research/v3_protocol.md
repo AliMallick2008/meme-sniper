@@ -45,7 +45,8 @@ fee, drift and network fee). Otherwise v2.0's marks.
 observation of the held coin.
 
 **A3e only, emergency exits (before the review):** (a) the creator wallet reported by the tape sells any amount after
-the entry; (b) the curve price is 20% or more under its highest trade price of the last 10 seconds.
+the entry; (b) the curve price is 20% or more under the highest price the curve had in the last 10 seconds (every trade
+in that window and the price it started the window at count; Amendment 1).
 
 **Cooldowns:** as v2.0.
 
@@ -63,3 +64,11 @@ over 2%, v3 results are reported with that bias stated.
 
 **Minimum evidence before any claim:** 30 closed trades per account and 5 calendar days; intervals by bootstrap over
 days. **Promotion** as v2.0 (audit D5). v3.0 never changes; a v3.1 would be a new version with its own lock.
+
+## Amendments (before the start)
+
+1. Oct 22 2026, 3:40 PM UTC, before v3 started and before any tape outcome was seen: rule (b) of A3e read "its highest
+   trade price of the last 10 seconds". Writing the tests showed the hole in that wording: a coin with no trade for a
+   while that is dumped in one transaction has only the dump inside the window, so the drop could never count. The rule
+   now includes the price the curve started the window at (the last trade before it). Nothing else changed.
+
