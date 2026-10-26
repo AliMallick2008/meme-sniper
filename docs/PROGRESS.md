@@ -145,3 +145,20 @@ To continue in Claude Code: open this repo and say "Continue the v11 audit work 
 - run.js: a new commit on main now hands over only if it changes what the server runs (server/ outside tools and tests,
   or the sniper workflow; checked with the compare API once per new commit). Docs, tools and page commits no longer
   interrupt the bots or add replay boundaries.
+- Oct 26 12:25 PM ET (16:25 UTC): the session was idle from Oct 22 about 12:45 PM ET; the check-ins scheduled into it
+  (Oct 22 18:30 and 22:20 UTC) were delivered only now, so nothing was steered for almost four days. The server ran on
+  its own the whole time: a run every 5 h 45 min, all successful, no coverage gap; the tape stayed up (146k trades in the
+  current run alone, each connection dropping now and then, the pair up); the fill model check over 3,488 Jupiter quotes
+  had a median gap of 0.00% (p90 0.01%). state.json 2.3 MB, v11.json 11.5 MB (trades and orders accumulate: trim it).
+- Forward results to Oct 26 16:25 UTC (`server/tools/v11_compare.js`; every account started with 10 paper SOL): A 0.16
+  SOL left (219 trades, profit factor 0.75, 34 rugs; loss-limit exits averaged -31.1%, 16.1 points past the limit), B
+  1.45 (127), C 8.36 (13), A3 0.18 (212; loss-limit exits 14.7 points past the limit: the tape did not fix the gaps),
+  A3e 0.18 (133; its emergency exits averaged -41%), B3 3.90 (92), A4 3.98 (135), E0 mostly at or near 0, HOLD 10.
+  Green days: A 1 of 4, A3 1 of 4 (the JAMESON day), A4 1 of 5, everything else 0. Nothing made money; cash won.
+  Why: about 1 in 6 of A's buys rugged (-70% to -95%), dumps happen in one transaction so the price jumps past any stop,
+  and the rare 10x (JAMESON) does not pay for the rest.
+- Restart bug found while building the v4 dataset (fixed in the working tree, test added): after a server restart the
+  engine kept the old run's tape as live until the new run's tape reported, so v3 could act on curve states from before
+  the restart. Seen twice in the forward record (B3 TRANSOM sell 15 s and B3 SIMUL buy 21 s after a run start; both curve
+  fills). Fix: run_start ends the tape (TapeDown "server restarted"); a coin is live again only after the new run's
+  subscription and a fresh curve state.

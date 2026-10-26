@@ -158,3 +158,20 @@ test('A4 (v3.1) enters only 8 minutes or more after the crossing; A3 takes the e
   assert.strictEqual(A4.exp, 'v11-v3.1/A4');
 });
 
+test('a server restart ends the tape: no v3 decision on curve states from before it, until the new run subscribes again', () => {
+  const coin = launch([[8, 9000]]);
+  const st = stateAt(coin.mc(min(4)));
+  const restart = [{ type: 'run_start', at: min(2.5), run: 'r2' }];
+  // without a new connection after the restart: A buys, A3 does not
+  const { S } = market({ coins: [coin], stopAt: min(6), accounts: withV3, extra: tapeFor(coin, min(6), { extra: restart }) });
+  assert.ok(ordersOf(S, 'A', 'buy').length === 1, 'A bought');
+  assert.strictEqual(ordersOf(S, 'A3', 'buy').length, 0, 'A3 did not trade on the old run\'s tape');
+  assert.ok(S.log.some(e => e.type === 'TapeDown' && e.why === 'server restarted'));
+  // the new run's tape comes up and subscribes: a fresh curve state, then A3 may buy
+  const back = restart.concat([{ type: 'tape_status', at: min(4), up: true, subs: 0, why: 'connected' }, { type: 'tape_sub', at: min(4) + 100, m: M, on: true },
+    Object.assign({ type: 'curve', at: min(4) + 300, m: M, slot: 9000, done: false, src: 'poll' }, st, { rs: st.vs - 30e6, rt: st.vt - 279.9e6 })]);
+  const { S: S2 } = market({ coins: [coin], stopAt: min(6), accounts: withV3, extra: tapeFor(coin, min(6), { extra: back }) });
+  const o = ordersOf(S2, 'A3', 'buy')[0];
+  assert.ok(o && o.reqAt >= min(4) + 300 && o.mode === 'curve', 'A3 bought once the new run\'s tape was live');
+});
+

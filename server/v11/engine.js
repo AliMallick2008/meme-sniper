@@ -130,6 +130,10 @@ function createEngine(opts = {}) {
   function runStart(ev) {
     const gapMs = ev.at - S.lastAt;
     for (const o of Object.values(S.orders)) if (o.status === 'requested') cancel(o, gapMs > GAP_MS ? 'server offline' : 'server restarted', ev.at);
+    // the trade tape belongs to the run that had it: a new run's tape is live only once its own connection and its own
+    // subscriptions are up (otherwise curve states from before a restart or an outage would count as current)
+    if (S.tape && S.tape.up) { S.tape = Object.assign({}, S.tape, { up: false, at: ev.at, why: 'server restarted' }); log('TapeDown', ev.at, { why: 'server restarted' }); }
+    for (const c of Object.values(S.coins)) if (c.tp && c.tp.sub) c.tp.sub = false;
     if (gapMs > GAP_MS) {
       const gap = { from: S.lastAt, to: ev.at, run: ev.run, held: [], hypo: [] };
       for (const A of accts()) if (A.pos) { gap.held.push({ acct: A.id, m: A.pos.m, sym: A.pos.sym }); A.pos.gapMs = (A.pos.gapMs || 0) + gapMs; }
